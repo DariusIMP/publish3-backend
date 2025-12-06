@@ -1,0 +1,45 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:latest
+    container_name: publish3-postgres
+    ports:
+      - '6500:5432'
+    volumes:
+      - progresDB:/var/lib/postgresql/data
+    env_file:
+      - ./.env
+  pgAdmin:
+    image: dpage/pgadmin4
+    container_name: publish3-pgAdmin
+    env_file:
+      - ./.env
+    ports:
+      - "5050:80"
+  redis:
+    image: redis:alpine
+    container_name: publish3-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisDB:/data
+  minio:
+    image: minio/minio:latest
+    container_name: publish3-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - ./.env
+    command: server /data --console-address ":9001"
+    # environment:
+    #   - MINIO_ROOT_USER:${MINIO_ROOT_USER}
+    #   - MINIO_ROOT_PASSWORD:${MINIO_ROOT_PASSWORD}
+    #   - MINIO_SERVER_URL:${MINIO_SERVER_URL}
+    volumes:
+      - minio_data:/data
+      # - ~/minio/certs:/root/.minio/certs:ro
+volumes:
+  redisDB:
+  progresDB:
+  minio_data:
