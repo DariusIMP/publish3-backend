@@ -1,5 +1,8 @@
 use sqlx::PgPool;
 
+pub mod models;
+pub use models::*;
+
 pub struct SqlClient {
     pub db: sqlx::PgPool,
 }
