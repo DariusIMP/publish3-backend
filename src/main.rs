@@ -130,14 +130,7 @@ async fn main() -> std::io::Result<()> {
                     ])
                     .supports_credentials(),
             )
-        // .configure(authentication::config)
-        // .configure(user::config)
-        // .configure(files::config)
-        // .configure(clients::config)
-        // .configure(forms::config)
-        // .configure(kanban::config)
-        // .configure(procedures::config)
-        // .configure(tasks::config)
+        .configure(api::config)
     })
     .bind("0.0.0.0:8080")?
     .run()
