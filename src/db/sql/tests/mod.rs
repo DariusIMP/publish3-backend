@@ -604,4 +604,258 @@ mod integration_tests {
 
         Ok(())
     }
+
+    #[sqlx::test]
+    async fn test_publication_crud_operations(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Test create publication
+        let new_publication = NewPublication {
+            user_id: None,
+            title: "Test Publication".to_string(),
+            about: Some("This is a test publication".to_string()),
+            tags: Some(vec!["test".to_string(), "ai".to_string()]),
+            s3key: Some("s3://bucket/key.pdf".to_string()),
+        };
+
+        let publication = sql_client.create_publication(&new_publication).await?;
+        assert_eq!(publication.title, "Test Publication");
+        assert_eq!(publication.about, Some("This is a test publication".to_string()));
+        assert_eq!(publication.tags, vec!["test".to_string(), "ai".to_string()]);
+        assert_eq!(publication.s3key, Some("s3://bucket/key.pdf".to_string()));
+
+        // Test get publication
+        let retrieved_publication = sql_client.get_publication(publication.id).await?;
+        assert_eq!(retrieved_publication.id, publication.id);
+        assert_eq!(retrieved_publication.title, "Test Publication");
+
+        // Test update publication
+        let update_result = sql_client
+            .update_publication(
+                publication.id,
+                None, // user_id stays the same
+                Some("Updated Title"),
+                Some("Updated description"),
+                Some(&["updated".to_string(), "ml".to_string()]),
+                Some("s3://bucket/updated.pdf"),
+            )
+            .await?;
+        assert!(update_result.rows_affected() > 0);
+
+        // Verify update
+        let updated_publication = sql_client.get_publication(publication.id).await?;
+        assert_eq!(updated_publication.title, "Updated Title");
+        assert_eq!(updated_publication.about, Some("Updated description".to_string()));
+        assert_eq!(updated_publication.tags, vec!["updated".to_string(), "ml".to_string()]);
+        assert_eq!(updated_publication.s3key, Some("s3://bucket/updated.pdf".to_string()));
+
+        // Test delete publication
+        let delete_result = sql_client.delete_publication(publication.id).await?;
+        assert!(delete_result.rows_affected() > 0);
+
+        // Verify deletion (should error)
+        let deleted_result = sql_client.get_publication(publication.id).await;
+        assert!(deleted_result.is_err());
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_list_publications_by_user(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create a user
+        let user = sql_client
+            .create_user(&NewUser {
+                username: "testuser".to_string(),
+                email: "user@example.com".to_string(),
+                password_hash: "hash".to_string(),
+                full_name: Some("Test User".to_string()),
+                avatar_s3key: None,
+                is_active: Some(true),
+                is_admin: Some(false),
+            })
+            .await?;
+
+        // Create publications for the user
+        for i in 0..3 {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: Some(user.id),
+                    title: format!("User Publication {}", i),
+                    about: Some("User publication description".to_string()),
+                    tags: Some(vec!["user".to_string()]),
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Create publications without user (should not appear in user list)
+        for i in 0..2 {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: format!("Anonymous Publication {}", i),
+                    about: None,
+                    tags: None,
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Test list publications by user
+        let user_publications = sql_client
+            .list_publications_by_user(user.id, Some(1), Some(10))
+            .await?;
+
+        // Should return only the 3 publications for this user
+        assert_eq!(user_publications.len(), 3);
+        for pub_item in &user_publications {
+            assert_eq!(pub_item.user_id, Some(user.id));
+            assert!(pub_item.title.starts_with("User Publication"));
+        }
+
+        // Test count publications by user
+        let user_pub_count = sql_client.count_publications_by_user(user.id).await?;
+        assert_eq!(user_pub_count, 3);
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_list_and_count_publications(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create multiple publications
+        for i in 0..5 {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: format!("Publication {}", i),
+                    about: Some(format!("Description {}", i)),
+                    tags: Some(vec!["test".to_string()]),
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Test list publications with pagination
+        let page1 = sql_client.list_publications(Some(1), Some(3)).await?;
+        assert_eq!(page1.len(), 3);
+
+        let page2 = sql_client.list_publications(Some(2), Some(3)).await?;
+        assert_eq!(page2.len(), 2);
+
+        // Test count publications
+        let total_count = sql_client.count_publications().await?;
+        assert_eq!(total_count, 5);
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_publication_pagination_edge_cases(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create many publications
+        for i in 0..25 {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: format!("Publication {}", i),
+                    about: None,
+                    tags: None,
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Test default pagination (page 1, limit 20)
+        let default_page = sql_client.list_publications(None, None).await?;
+        assert_eq!(default_page.len(), 20);
+
+        // Test page beyond available data
+        let empty_page = sql_client.list_publications(Some(10), Some(10)).await?;
+        assert!(empty_page.is_empty());
+
+        // Test small limit
+        let small_page = sql_client.list_publications(Some(1), Some(5)).await?;
+        assert_eq!(small_page.len(), 5);
+
+        // Test large limit
+        let large_page = sql_client.list_publications(Some(1), Some(100)).await?;
+        assert_eq!(large_page.len(), 25);
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_publication_update_partial_fields(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create a publication
+        let publication = sql_client
+            .create_publication(&NewPublication {
+                user_id: None,
+                title: "Original Title".to_string(),
+                about: Some("Original description".to_string()),
+                tags: Some(vec!["original".to_string()]),
+                s3key: Some("s3://original.pdf".to_string()),
+            })
+            .await?;
+
+        // Test updating only title
+        let result1 = sql_client
+            .update_publication(
+                publication.id,
+                None,
+                Some("Updated Title Only"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        assert!(result1.rows_affected() > 0);
+
+        let after_title_update = sql_client.get_publication(publication.id).await?;
+        assert_eq!(after_title_update.title, "Updated Title Only");
+        assert_eq!(after_title_update.about, Some("Original description".to_string()));
+        assert_eq!(after_title_update.tags, vec!["original".to_string()]);
+        assert_eq!(after_title_update.s3key, Some("s3://original.pdf".to_string()));
+
+        // Test updating only tags
+        let result2 = sql_client
+            .update_publication(
+                publication.id,
+                None,
+                None,
+                None,
+                Some(&["updated".to_string(), "tags".to_string()]),
+                None,
+            )
+            .await?;
+        assert!(result2.rows_affected() > 0);
+
+        let after_tags_update = sql_client.get_publication(publication.id).await?;
+        assert_eq!(after_tags_update.title, "Updated Title Only");
+        assert_eq!(after_tags_update.tags, vec!["updated".to_string(), "tags".to_string()]);
+
+        // Test updating only s3key
+        let result3 = sql_client
+            .update_publication(
+                publication.id,
+                None,
+                None,
+                None,
+                None,
+                Some("s3://updated.pdf"),
+            )
+            .await?;
+        assert!(result3.rows_affected() > 0);
+
+        let after_s3key_update = sql_client.get_publication(publication.id).await?;
+        assert_eq!(after_s3key_update.s3key, Some("s3://updated.pdf".to_string()));
+
+        Ok(())
+    }
 }
