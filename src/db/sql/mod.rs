@@ -24,3 +24,6 @@ impl SqlClient {
         Self { db: pool }
     }
 }
+
+#[cfg(test)]
+pub mod tests;
