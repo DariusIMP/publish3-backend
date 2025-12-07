@@ -373,4 +373,235 @@ mod integration_tests {
 
         Ok(())
     }
+
+    #[sqlx::test]
+    async fn test_search_publications_by_title(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create publications with different titles
+        let publications = vec![
+            "Machine Learning Advances",
+            "Deep Learning Research",
+            "Artificial Intelligence Review",
+            "Machine Vision Systems",
+        ];
+
+        for title in publications {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: title.to_string(),
+                    about: Some("Test description".to_string()),
+                    tags: Some(vec!["ai".to_string()]),
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Search for publications with "Machine" in title
+        let machine_pubs = sql_client
+            .search_publications_by_title("Machine", Some(1), Some(10))
+            .await?;
+
+        // Should return 2 publications with "Machine" in title
+        assert_eq!(machine_pubs.len(), 2);
+        for pub_item in &machine_pubs {
+            assert!(pub_item.title.contains("Machine"));
+        }
+
+        // Search for publications with "Learning" in title
+        let learning_pubs = sql_client
+            .search_publications_by_title("Learning", Some(1), Some(10))
+            .await?;
+
+        // Should return 2 publications with "Learning" in title
+        assert_eq!(learning_pubs.len(), 2);
+        for pub_item in &learning_pubs {
+            assert!(pub_item.title.contains("Learning"));
+        }
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_search_publications_by_tag(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create publications with different tags
+        let publications = vec![
+            ("Paper 1", vec!["ai".to_string(), "ml".to_string()]),
+            ("Paper 2", vec!["ml".to_string(), "dl".to_string()]),
+            ("Paper 3", vec!["ai".to_string(), "cv".to_string()]),
+            ("Paper 4", vec!["nlp".to_string()]),
+        ];
+
+        for (title, tags) in publications {
+            sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: title.to_string(),
+                    about: Some("Test description".to_string()),
+                    tags: Some(tags),
+                    s3key: None,
+                })
+                .await?;
+        }
+
+        // Search for publications with "ai" tag
+        let ai_pubs = sql_client
+            .search_publications_by_tag("ai", Some(1), Some(10))
+            .await?;
+
+        // Should return 2 publications with "ai" tag
+        assert_eq!(ai_pubs.len(), 2);
+        for pub_item in &ai_pubs {
+            assert!(pub_item.tags.contains(&"ai".to_string()));
+        }
+
+        // Search for publications with "ml" tag
+        let ml_pubs = sql_client
+            .search_publications_by_tag("ml", Some(1), Some(10))
+            .await?;
+
+        // Should return 2 publications with "ml" tag
+        assert_eq!(ml_pubs.len(), 2);
+        for pub_item in &ml_pubs {
+            assert!(pub_item.tags.contains(&"ml".to_string()));
+        }
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_citation_relationships(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create multiple publications
+        let mut publications = Vec::new();
+        for i in 0..5 {
+            let publication = sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: format!("Publication {}", i),
+                    about: None,
+                    tags: None,
+                    s3key: None,
+                })
+                .await?;
+            publications.push(publication);
+        }
+
+        // Create citation relationships: 0 cites 1, 1 cites 2, 2 cites 3, 3 cites 4
+        for i in 0..4 {
+            let new_citation = NewCitation {
+                citing_publication_id: publications[i].id,
+                cited_publication_id: publications[i + 1].id,
+                citation_context: Some(format!("Citation from {} to {}", i, i + 1)),
+            };
+            sql_client.create_citation(&new_citation).await?;
+        }
+
+        // Test get_publication_citations for publication 1
+        let pub1_citations = sql_client.get_publication_citations(publications[1].id).await?;
+        // Should return 2 citations (cited by 0, cites 2)
+        assert_eq!(pub1_citations.len(), 2);
+
+        // Test get_cited_by for publication 2
+        let cited_by = sql_client.get_cited_by(publications[2].id).await?;
+        // Should return 1 publication (cited by 1)
+        assert_eq!(cited_by.len(), 1);
+        assert_eq!(cited_by[0].id, publications[1].id);
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_author_publications_relationship(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create an author
+        let author = sql_client
+            .create_author(&NewAuthor {
+                name: "Test Author".to_string(),
+                email: Some("author@example.com".to_string()),
+                affiliation: Some("Test University".to_string()),
+            })
+            .await?;
+
+        // Create multiple publications
+        let mut publications = Vec::new();
+        for i in 0..5 {
+            let publication = sql_client
+                .create_publication(&NewPublication {
+                    user_id: None,
+                    title: format!("Publication {}", i),
+                    about: None,
+                    tags: None,
+                    s3key: None,
+                })
+                .await?;
+            publications.push(publication);
+        }
+
+        // Add author to first 3 publications
+        for i in 0..3 {
+            sql_client
+                .add_author_to_publication(publications[i].id, author.id, Some(i as i32))
+                .await?;
+        }
+
+        // Test get_author_publications
+        let author_pubs = sql_client
+            .get_author_publications(author.id, Some(1), Some(10))
+            .await?;
+
+        // Should return 3 publications
+        assert_eq!(author_pubs.len(), 3);
+
+        // Test count_publications_for_author
+        let pub_count = sql_client.count_publications_for_author(author.id).await?;
+        assert_eq!(pub_count, 3);
+
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn test_update_author_order(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let sql_client = SqlClient::new(pool.clone()).await;
+
+        // Create a publication and an author
+        let publication = sql_client
+            .create_publication(&NewPublication {
+                user_id: None,
+                title: "Test Publication".to_string(),
+                about: None,
+                tags: None,
+                s3key: None,
+            })
+            .await?;
+
+        let author = sql_client
+            .create_author(&NewAuthor {
+                name: "Test Author".to_string(),
+                email: Some("author@example.com".to_string()),
+                affiliation: Some("Test University".to_string()),
+            })
+            .await?;
+
+        // Add author with initial order 1
+        sql_client.add_author_to_publication(publication.id, author.id, Some(1)).await?;
+
+        // Update author order to 2
+        let result = sql_client
+            .update_author_order(publication.id, author.id, 2)
+            .await?;
+        assert!(result.rows_affected() > 0);
+
+        // Verify the update
+        let pub_authors = PublicationAuthorOperations::get_publication_authors(&sql_client, publication.id).await?;
+        assert_eq!(pub_authors.len(), 1);
+        assert_eq!(pub_authors[0].author_order, 2);
+
+        Ok(())
+    }
 }
