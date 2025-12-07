@@ -9,26 +9,27 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{models::NewPublication, PublicationOperations},
+    db::sql::{PublicationOperations, models::NewPublication},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/publications")
         .service(create_publication)
-        .service(get_publication)
-        .service(update_publication)
-        .service(delete_publication)
         .service(list_publications)
         .service(list_publications_by_user)
         .service(search_publications_by_title)
         .service(search_publications_by_tag)
+        .service(get_publication)
+        .service(update_publication)
+        .service(delete_publication)
         .service(get_publication_authors)
         .service(get_publication_citations)
-        .service(get_cited_by)
-        .service(count_publications)
-        .service(count_publications_by_user);
+        .service(get_cited_by);
     conf.service(scope);
 }
+
+#[cfg(test)]
+mod tests;
 
 #[derive(MultipartForm)]
 #[allow(non_snake_case)]
@@ -67,9 +68,9 @@ async fn create_publication(
             .as_ref()
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unnamed.pdf".to_string());
-        
+
         let s3_path = format!("publications/{}/{}", Uuid::new_v4(), file_name);
-        
+
         // Use upload_storage_files which expects Vec<TempFile>
         data.s3_client
             .upload_storage_files(vec![file], Some(s3_path.clone().into()))
@@ -78,7 +79,7 @@ async fn create_publication(
                 tracing::error!("Error uploading file to S3: {}", err);
                 ErrorInternalServerError("Failed to upload file")
             })?;
-        
+
         s3key = Some(s3_path);
     }
 
@@ -160,9 +161,9 @@ async fn update_publication(
             .as_ref()
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unnamed.pdf".to_string());
-        
+
         let s3_path = format!("publications/{}/{}", Uuid::new_v4(), file_name);
-        
+
         // Use upload_storage_files which expects Vec<TempFile>
         data.s3_client
             .upload_storage_files(vec![file], Some(s3_path.clone().into()))
@@ -171,7 +172,7 @@ async fn update_publication(
                 tracing::error!("Error uploading file to S3: {}", err);
                 ErrorInternalServerError("Failed to upload file")
             })?;
-        
+
         s3key = Some(s3_path);
     }
 
@@ -223,7 +224,11 @@ async fn delete_publication(
     if let Some(s3key) = &publication.s3key {
         // Extract just the filename from the path for deletion
         if let Some(file_name) = s3key.split('/').last() {
-            if let Err(err) = data.s3_client.delete_storage_files(vec![file_name.to_string()], None).await {
+            if let Err(err) = data
+                .s3_client
+                .delete_storage_files(vec![file_name.to_string()], None)
+                .await
+            {
                 tracing::warn!("Failed to delete S3 file {}: {}", s3key, err);
                 // Continue with database deletion even if S3 deletion fails
             }
@@ -260,14 +265,10 @@ async fn list_publications(
             ErrorInternalServerError("Internal server error")
         })?;
 
-    let total_count = data
-        .sql_client
-        .count_publications()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting publications: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
+    let total_count = data.sql_client.count_publications().await.map_err(|err| {
+        tracing::error!("Error counting publications: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "publications": publications,
@@ -429,41 +430,4 @@ async fn get_cited_by(
         })?;
 
     Ok(HttpResponse::Ok().json(cited_by))
-}
-
-#[get("/count")]
-async fn count_publications(
-    data: web::Data<AppState>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let count = data
-        .sql_client
-        .count_publications()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting publications: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "count": count
-    })))
-}
-
-#[get("/count/user/{user_id}")]
-async fn count_publications_by_user(
-    user_id: web::Path<Uuid>,
-    data: web::Data<AppState>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let count = data
-        .sql_client
-        .count_publications_by_user(*user_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting user publications: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "count": count
-    })))
 }

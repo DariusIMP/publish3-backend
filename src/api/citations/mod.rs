@@ -8,20 +8,22 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{models::NewCitation, CitationOperations},
+    db::sql::{CitationOperations, models::NewCitation},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/citations")
         .service(create_citation)
-        .service(get_citation)
-        .service(update_citation)
-        .service(delete_citation)
         .service(list_citations)
         .service(get_citation_by_publications)
-        .service(count_citations);
+        .service(get_citation)
+        .service(update_citation)
+        .service(delete_citation);
     conf.service(scope);
 }
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Deserialize)]
 pub struct CreateCitationRequest {
@@ -46,7 +48,9 @@ async fn create_citation(
         })?;
 
     if existing_citation.is_some() {
-        return Err(ErrorConflict("Citation already exists between these publications"));
+        return Err(ErrorConflict(
+            "Citation already exists between these publications",
+        ));
     }
 
     // Check that publications are not the same
@@ -157,14 +161,10 @@ async fn list_citations(
             ErrorInternalServerError("Internal server error")
         })?;
 
-    let total_count = data
-        .sql_client
-        .count_citations()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting citations: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
+    let total_count = data.sql_client.count_citations().await.map_err(|err| {
+        tracing::error!("Error counting citations: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "citations": citations,
@@ -196,7 +196,9 @@ async fn get_citation_by_publications(
 
     match citation {
         Some(citation) => Ok(HttpResponse::Ok().json(citation)),
-        None => Err(ErrorNotFound("Citation not found between these publications")),
+        None => Err(ErrorNotFound(
+            "Citation not found between these publications",
+        )),
     }
 }
 
@@ -204,22 +206,4 @@ async fn get_citation_by_publications(
 struct CitationByPublicationsQuery {
     citing_publication_id: Uuid,
     cited_publication_id: Uuid,
-}
-
-#[get("/count")]
-async fn count_citations(
-    data: web::Data<AppState>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let count = data
-        .sql_client
-        .count_citations()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting citations: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "count": count
-    })))
 }

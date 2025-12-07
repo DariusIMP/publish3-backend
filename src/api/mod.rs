@@ -4,6 +4,9 @@ pub mod publications;
 pub mod citations;
 pub mod publication_authors;
 
+#[cfg(test)]
+pub mod tests;
+
 pub fn config(cfg: &mut actix_web::web::ServiceConfig) {
     users::config(cfg);
     authors::config(cfg);
