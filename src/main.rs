@@ -8,22 +8,18 @@ use crate::{
     },
 };
 use actix_cors::Cors;
-use actix_session::{SessionMiddleware, storage::RedisSessionStore};
-use actix_web::{
-    App, HttpServer,
-    cookie::{Key, SameSite},
-    http::header,
-    middleware, web,
-};
+use actix_web::{App, HttpServer, http::header, middleware, web};
 use aws_sdk_s3::config::Credentials;
 use dotenv::dotenv;
 use lazy_static::lazy_static;
+use privy_rs::PrivyClient;
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 pub mod api;
+pub mod auth;
 pub mod common;
 pub mod config;
 pub mod db;
@@ -49,6 +45,8 @@ async fn main() -> std::io::Result<()> {
                 .from_env_lossy(),
         )
         .init();
+
+    let client = PrivyClient::new_from_env().unwrap();
 
     let pool = match PgPoolOptions::new()
         .max_connections(10)
@@ -93,17 +91,11 @@ async fn main() -> std::io::Result<()> {
         .create_bucket(S3Bucket::Storage, true)
         .await
         .unwrap();
-    
-    tracing::info!("setting up Redis session storage");
-    let storage = RedisSessionStore::new(CONFIG.redis_url.to_owned())
-        .await
-        .unwrap();
 
     let address = format!("{}:{}", CONFIG.server_address, CONFIG.server_port);
 
     tracing::info!("starting HTTP server at http://{address}");
     HttpServer::new(move || {
-        let key = Key::from(CONFIG.access_token_private_key.as_bytes());
         App::new()
             .app_data(web::Data::new(AppState {
                 sql_client: sql_client.clone(),
@@ -112,13 +104,7 @@ async fn main() -> std::io::Result<()> {
             }))
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
-            .wrap(
-                SessionMiddleware::builder(storage.clone(), key)
-                    .cookie_http_only(true)
-                    .cookie_same_site(SameSite::None)
-                    .cookie_secure(true)
-                    .build(),
-            )
+            .wrap(crate::auth::Privy)
             .wrap(
                 Cors::default()
                     .allowed_origin(&CONFIG.client_origin)
@@ -130,7 +116,7 @@ async fn main() -> std::io::Result<()> {
                     ])
                     .supports_credentials(),
             )
-        .configure(api::config)
+            .configure(api::config)
     })
     .bind("0.0.0.0:8080")?
     .run()

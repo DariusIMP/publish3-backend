@@ -12,16 +12,6 @@ pub struct Config {
     pub server_port: String,
     pub server_base_url: String,
 
-    pub access_token_private_key: String,
-    pub access_token_public_key: String,
-    pub access_token_expires_in: String,
-    pub access_token_max_age: i64,
-
-    pub refresh_token_private_key: String,
-    pub refresh_token_public_key: String,
-    pub refresh_token_expires_in: String,
-    pub refresh_token_max_age: i64,
-
     pub s3_access_key: String,
     pub s3_secret_key: String,
     pub s3_endpoint: String,
@@ -29,7 +19,7 @@ pub struct Config {
     // Privy authentication
     pub privy_app_id: String,
     pub privy_app_secret: String,
-    pub privy_jwt_verification_key: String,
+    pub privy_jwt_verification_key: Vec<u8>,
 }
 
 impl Config {
@@ -42,16 +32,6 @@ impl Config {
         let server_port = get_env_var("SERVER_PORT");
         let server_base_url = get_env_var("SERVER_BASE_URL");
 
-        let access_token_private_key = get_env_var("ACCESS_TOKEN_PRIVATE_KEY");
-        let access_token_public_key = get_env_var("ACCESS_TOKEN_PUBLIC_KEY");
-        let access_token_expires_in = get_env_var("ACCESS_TOKEN_EXPIRED_IN");
-        let access_token_max_age = get_env_var("ACCESS_TOKEN_MAXAGE");
-
-        let refresh_token_private_key = get_env_var("REFRESH_TOKEN_PRIVATE_KEY");
-        let refresh_token_public_key = get_env_var("REFRESH_TOKEN_PUBLIC_KEY");
-        let refresh_token_expires_in = get_env_var("REFRESH_TOKEN_EXPIRED_IN");
-        let refresh_token_max_age = get_env_var("REFRESH_TOKEN_MAXAGE");
-
         let s3_access_key = get_env_var("S3_ACCESS_KEY");
         let s3_secret_key = get_env_var("S3_SECRET_KEY");
         let s3_endpoint = get_env_var("S3_ENDPOINT");
@@ -59,7 +39,9 @@ impl Config {
         // Privy configuration
         let privy_app_id = get_env_var("PRIVY_APP_ID");
         let privy_app_secret = get_env_var("PRIVY_APP_SECRET");
-        let privy_jwt_verification_key = get_env_var("PRIVY_JWT_VERIFICATION_KEY");
+        let privy_jwt_verification_key = base64::decode(get_env_var("PRIVY_JWT_VERIFICATION_KEY"))
+            .unwrap_or_else(|_| panic!("PRIVY_JWT_VERIFICATION_KEY must be a valid base64 string"))
+            .to_vec();
 
         Config {
             database_url,
@@ -68,14 +50,6 @@ impl Config {
             server_address,
             server_port,
             server_base_url,
-            access_token_private_key,
-            access_token_public_key,
-            refresh_token_private_key,
-            refresh_token_public_key,
-            access_token_expires_in,
-            refresh_token_expires_in,
-            access_token_max_age: access_token_max_age.parse::<i64>().unwrap(),
-            refresh_token_max_age: refresh_token_max_age.parse::<i64>().unwrap(),
             s3_access_key,
             s3_secret_key,
             s3_endpoint,
