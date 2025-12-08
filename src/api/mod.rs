@@ -1,8 +1,8 @@
-pub mod users;
 pub mod authors;
-pub mod publications;
 pub mod citations;
 pub mod publication_authors;
+pub mod publications;
+pub mod users;
 
 #[cfg(test)]
 pub mod tests;

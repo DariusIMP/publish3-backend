@@ -22,11 +22,11 @@ mod integration_tests {
         let new_user = NewUser {
             username: "testuser".to_string(),
             email: "test@example.com".to_string(),
-            password_hash: "hashed_password".to_string(),
             full_name: Some("Test User".to_string()),
             avatar_s3key: None,
             is_active: Some(true),
             is_admin: Some(false),
+            privy_id: "privy_test_user_123".to_string(),
         };
 
         let user = sql_client.create_user(&new_user).await?;
@@ -44,7 +44,6 @@ mod integration_tests {
                 user.id,
                 Some("updateduser"),
                 Some("updated@example.com"),
-                Some("new_hash"),
                 Some("Updated User"),
                 None,
                 Some(false),
@@ -69,11 +68,11 @@ mod integration_tests {
             let new_user = NewUser {
                 username: format!("user{}", i),
                 email: format!("user{}@example.com", i),
-                password_hash: "hash".to_string(),
                 full_name: Some(format!("User {}", i)),
                 avatar_s3key: None,
                 is_active: Some(true),
                 is_admin: Some(false),
+                privy_id: format!("privy_user_{}", i),
             };
             sql_client.create_user(&new_user).await?;
         }
@@ -96,11 +95,11 @@ mod integration_tests {
         let new_user = NewUser {
             username: "testuser".to_string(),
             email: "test@example.com".to_string(),
-            password_hash: "hash".to_string(),
             full_name: None,
             avatar_s3key: None,
             is_active: Some(true),
             is_admin: Some(false),
+            privy_id: "privy_test_user_456".to_string(),
         };
 
         sql_client.create_user(&new_user).await?;
@@ -669,11 +668,11 @@ mod integration_tests {
             .create_user(&NewUser {
                 username: "testuser".to_string(),
                 email: "user@example.com".to_string(),
-                password_hash: "hash".to_string(),
                 full_name: Some("Test User".to_string()),
                 avatar_s3key: None,
                 is_active: Some(true),
                 is_admin: Some(false),
+                privy_id: "privy_test_user_789".to_string(),
             })
             .await?;
 

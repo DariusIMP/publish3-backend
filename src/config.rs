@@ -25,6 +25,11 @@ pub struct Config {
     pub s3_access_key: String,
     pub s3_secret_key: String,
     pub s3_endpoint: String,
+
+    // Privy authentication
+    pub privy_app_id: String,
+    pub privy_app_secret: String,
+    pub privy_jwt_verification_key: String,
 }
 
 impl Config {
@@ -51,6 +56,11 @@ impl Config {
         let s3_secret_key = get_env_var("S3_SECRET_KEY");
         let s3_endpoint = get_env_var("S3_ENDPOINT");
 
+        // Privy configuration
+        let privy_app_id = get_env_var("PRIVY_APP_ID");
+        let privy_app_secret = get_env_var("PRIVY_APP_SECRET");
+        let privy_jwt_verification_key = get_env_var("PRIVY_JWT_VERIFICATION_KEY");
+
         Config {
             database_url,
             redis_url,
@@ -69,6 +79,9 @@ impl Config {
             s3_access_key,
             s3_secret_key,
             s3_endpoint,
+            privy_app_id,
+            privy_app_secret,
+            privy_jwt_verification_key,
         }
     }
 }
