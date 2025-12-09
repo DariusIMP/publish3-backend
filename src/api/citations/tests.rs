@@ -18,9 +18,13 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test users first
+        let user1_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+        let user2_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let pub1 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user1_privy_id.clone(),
                 title: "Citing Publication".to_string(),
                 about: Some("This publication cites another".to_string()),
                 tags: Some(vec!["citing".to_string()]),
@@ -31,7 +35,7 @@ mod tests {
 
         let pub2 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user2_privy_id.clone(),
                 title: "Cited Publication".to_string(),
                 about: Some("This publication is cited".to_string()),
                 tags: Some(vec!["cited".to_string()]),
@@ -43,7 +47,6 @@ mod tests {
         let request_body = json!({
             "citing_publication_id": pub1.id.to_string(),
             "cited_publication_id": pub2.id.to_string(),
-            "citation_context": "Test citation context via API",
         });
 
         let req = test::TestRequest::post()
@@ -57,7 +60,6 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["citing_publication_id"], pub1.id.to_string());
         assert_eq!(body["cited_publication_id"], pub2.id.to_string());
-        assert_eq!(body["citation_context"], "Test citation context via API");
     }
 
     #[sqlx::test]
@@ -65,9 +67,13 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test users first
+        let user1_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+        let user2_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let pub1 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user1_privy_id.clone(),
                 title: "Citing Publication".to_string(),
                 about: Some("This publication cites another".to_string()),
                 tags: Some(vec!["citing".to_string()]),
@@ -78,7 +84,7 @@ mod tests {
 
         let pub2 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user2_privy_id.clone(),
                 title: "Cited Publication".to_string(),
                 about: Some("This publication is cited".to_string()),
                 tags: Some(vec!["cited".to_string()]),
@@ -91,7 +97,6 @@ mod tests {
             .create_citation(&NewCitation {
                 citing_publication_id: pub1.id,
                 cited_publication_id: pub2.id,
-                citation_context: Some("Test citation context".to_string()),
             })
             .await
             .unwrap();
@@ -116,9 +121,11 @@ mod tests {
 
         let mut publications = Vec::new();
         for i in 0..4 {
+            // Create test user for each publication
+            let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
             let publication = sql_client
                 .create_publication(&NewPublication {
-                    user_id: None,
+                    user_id: user_privy_id.clone(),
                     title: format!("Publication {}", i),
                     about: None,
                     tags: None,
@@ -134,7 +141,6 @@ mod tests {
                 .create_citation(&NewCitation {
                     citing_publication_id: publications[i].id,
                     cited_publication_id: publications[i + 1].id,
-                    citation_context: Some(format!("Citation {}", i)),
                 })
                 .await
                 .unwrap();
@@ -157,9 +163,13 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test users first
+        let user1_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+        let user2_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let pub1 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user1_privy_id.clone(),
                 title: "Citing Publication".to_string(),
                 about: Some("This publication cites another".to_string()),
                 tags: Some(vec!["citing".to_string()]),
@@ -170,7 +180,7 @@ mod tests {
 
         let pub2 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user2_privy_id.clone(),
                 title: "Cited Publication".to_string(),
                 about: Some("This publication is cited".to_string()),
                 tags: Some(vec!["cited".to_string()]),
@@ -183,14 +193,11 @@ mod tests {
             .create_citation(&NewCitation {
                 citing_publication_id: pub1.id,
                 cited_publication_id: pub2.id,
-                citation_context: Some("Original context".to_string()),
             })
             .await
             .unwrap();
 
-        let request_body = json!({
-            "citation_context": "Updated citation context",
-        });
+        let request_body = json!({});
 
         let req = test::TestRequest::put()
             .uri(&format!("/citations/{}", citation.id))
@@ -206,7 +213,9 @@ mod tests {
 
         let get_resp = test::call_service(&app, get_req).await;
         let body: serde_json::Value = test::read_body_json(get_resp).await;
-        assert_eq!(body["citation_context"], "Updated citation context");
+        // Verify citation exists
+        assert_eq!(body["citing_publication_id"], pub1.id.to_string());
+        assert_eq!(body["cited_publication_id"], pub2.id.to_string());
     }
 
     #[sqlx::test]
@@ -214,9 +223,13 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test users first
+        let user1_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+        let user2_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let pub1 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user1_privy_id.clone(),
                 title: "Citing Publication".to_string(),
                 about: Some("This publication cites another".to_string()),
                 tags: Some(vec!["citing".to_string()]),
@@ -227,7 +240,7 @@ mod tests {
 
         let pub2 = sql_client
             .create_publication(&NewPublication {
-                user_id: None,
+                user_id: user2_privy_id.clone(),
                 title: "Cited Publication".to_string(),
                 about: Some("This publication is cited".to_string()),
                 tags: Some(vec!["cited".to_string()]),
@@ -240,7 +253,6 @@ mod tests {
             .create_citation(&NewCitation {
                 citing_publication_id: pub1.id,
                 cited_publication_id: pub2.id,
-                citation_context: Some("Citation to delete".to_string()),
             })
             .await
             .unwrap();

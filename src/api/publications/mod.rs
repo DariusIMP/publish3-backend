@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{PublicationOperations, models::NewPublication},
+    db::sql::{PrivyId, PublicationOperations, models::NewPublication},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -34,10 +34,10 @@ mod tests;
 #[derive(MultipartForm)]
 #[allow(non_snake_case)]
 pub struct CreatePublicationForm {
-    userId: Option<Text<Uuid>>,
+    userId: Text<PrivyId>, // TODO: a publication can have multiple authors, add a list of authors
     title: Text<String>,
     about: Option<Text<String>>,
-    tags: Option<Text<String>>, // JSON array string like ["tag1", "tag2"]
+    tags: Option<Text<String>>,
     file: Option<TempFile>,
 }
 
@@ -84,7 +84,7 @@ async fn create_publication(
     }
 
     let new_publication = NewPublication {
-        user_id: form.userId.map(|u| u.0),
+        user_id: form.userId.0,
         title: form.title.0,
         about: form.about.map(|a| a.0),
         tags,
@@ -126,7 +126,7 @@ async fn get_publication(
 #[derive(MultipartForm)]
 #[allow(non_snake_case)]
 pub struct UpdatePublicationForm {
-    userId: Option<Text<Uuid>>,
+    userId: Option<Text<String>>, // Changed from Uuid to String
     title: Option<Text<String>>,
     about: Option<Text<String>>,
     tags: Option<Text<String>>, // JSON array string like ["tag1", "tag2"]
@@ -180,7 +180,7 @@ async fn update_publication(
         .sql_client
         .update_publication(
             *publication_id,
-            form.userId.map(|u| u.0),
+            form.userId.as_ref().map(|u| u.0.as_str()),
             form.title.as_ref().map(|t| t.0.as_str()),
             form.about.as_ref().map(|a| a.0.as_str()),
             tags.as_deref(),
@@ -284,15 +284,15 @@ struct ListPublicationsQuery {
     limit: Option<i64>,
 }
 
-#[get("/user/{user_id}")]
+#[get("/user/{privy_id}")]
 async fn list_publications_by_user(
-    user_id: web::Path<Uuid>,
+    privy_id: web::Path<String>,
     data: web::Data<AppState>,
     query: web::Query<ListPublicationsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let publications = data
         .sql_client
-        .list_publications_by_user(*user_id, query.page, query.limit)
+        .list_publications_by_user(&privy_id, query.page, query.limit)
         .await
         .map_err(|err| {
             tracing::error!("Error listing user publications: {}", err);
@@ -301,7 +301,7 @@ async fn list_publications_by_user(
 
     let total_count = data
         .sql_client
-        .count_publications_by_user(*user_id)
+        .count_publications_by_user(&privy_id)
         .await
         .map_err(|err| {
             tracing::error!("Error counting user publications: {}", err);

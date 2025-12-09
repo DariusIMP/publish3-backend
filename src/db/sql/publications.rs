@@ -2,67 +2,79 @@ use async_trait::async_trait;
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
-use crate::db::sql::{models::Publication, SqlClient};
+use crate::db::sql::{SqlClient, models::Publication};
 
 #[async_trait]
 pub trait PublicationOperations {
-    async fn create_publication(&self, new_publication: &super::models::NewPublication) -> Result<Publication, sqlx::Error>;
-    
+    async fn create_publication(
+        &self,
+        new_publication: &super::models::NewPublication,
+    ) -> Result<Publication, sqlx::Error>;
+
     async fn get_publication(&self, publication_id: Uuid) -> Result<Publication, sqlx::Error>;
-    
+
     async fn list_publications(
-        &self, 
-        page: Option<i64>, 
-        limit: Option<i64>
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
-    
+
     async fn list_publications_by_user(
         &self,
-        user_id: Uuid,
+        user_id: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
-    
+
     async fn search_publications_by_title(
         &self,
         title_query: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
-    
+
     async fn search_publications_by_tag(
         &self,
         tag: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
-    
+
     async fn update_publication(
         &self,
         publication_id: Uuid,
-        user_id: Option<Uuid>,
+        user_id: Option<&str>,
         title: Option<&str>,
         about: Option<&str>,
         tags: Option<&[String]>,
         s3key: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error>;
-    
+
     async fn delete_publication(&self, publication_id: Uuid) -> Result<PgQueryResult, sqlx::Error>;
-    
+
     async fn count_publications(&self) -> Result<i64, sqlx::Error>;
-    
-    async fn count_publications_by_user(&self, user_id: Uuid) -> Result<i64, sqlx::Error>;
-    
-    async fn get_publication_authors(&self, publication_id: Uuid) -> Result<Vec<super::models::Author>, sqlx::Error>;
-    
-    async fn get_publication_citations(&self, publication_id: Uuid) -> Result<Vec<super::models::Citation>, sqlx::Error>;
-    
+
+    async fn count_publications_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error>;
+
+    async fn get_publication_authors(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::Author>, sqlx::Error>;
+
+    async fn get_publication_citations(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::Citation>, sqlx::Error>;
+
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error>;
 }
 
 #[async_trait]
 impl PublicationOperations for SqlClient {
-    async fn create_publication(&self, new_publication: &super::models::NewPublication) -> Result<Publication, sqlx::Error> {
+    async fn create_publication(
+        &self,
+        new_publication: &super::models::NewPublication,
+    ) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
             INSERT INTO publications (user_id, title, about, tags, s3key)
@@ -70,7 +82,7 @@ impl PublicationOperations for SqlClient {
             RETURNING id, user_id, title, about, tags, s3key, created_at, updated_at
             "#,
         )
-        .bind(new_publication.user_id)
+        .bind(&new_publication.user_id)
         .bind(&new_publication.title)
         .bind(&new_publication.about)
         .bind(new_publication.tags.as_deref().unwrap_or(&[]))
@@ -78,7 +90,7 @@ impl PublicationOperations for SqlClient {
         .fetch_one(&self.db)
         .await
     }
-    
+
     async fn get_publication(&self, publication_id: Uuid) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
@@ -91,16 +103,16 @@ impl PublicationOperations for SqlClient {
         .fetch_one(&self.db)
         .await
     }
-    
+
     async fn list_publications(
-        &self, 
-        page: Option<i64>, 
-        limit: Option<i64>
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
-        
+
         sqlx::query_as::<_, Publication>(
             r#"
             SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
@@ -114,17 +126,17 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
+
     async fn list_publications_by_user(
         &self,
-        user_id: Uuid,
+        user_id: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
-        
+
         sqlx::query_as::<_, Publication>(
             r#"
             SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
@@ -140,18 +152,18 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
+
     async fn search_publications_by_title(
         &self,
         title_query: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
         let search_pattern = format!("%{}%", title_query);
-        
+
         sqlx::query_as::<_, Publication>(
             r#"
             SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
@@ -167,17 +179,17 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
+
     async fn search_publications_by_tag(
         &self,
         tag: &str,
         page: Option<i64>,
-        limit: Option<i64>
+        limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
-        
+
         sqlx::query_as::<_, Publication>(
             r#"
             SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
@@ -193,11 +205,11 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
+
     async fn update_publication(
         &self,
         publication_id: Uuid,
-        user_id: Option<Uuid>,
+        user_id: Option<&str>,
         title: Option<&str>,
         about: Option<&str>,
         tags: Option<&[String]>,
@@ -224,34 +236,31 @@ impl PublicationOperations for SqlClient {
         .execute(&self.db)
         .await
     }
-    
+
     async fn delete_publication(&self, publication_id: Uuid) -> Result<PgQueryResult, sqlx::Error> {
-        sqlx::query(
-            "DELETE FROM publications WHERE id = $1",
-        )
-        .bind(publication_id)
-        .execute(&self.db)
-        .await
+        sqlx::query("DELETE FROM publications WHERE id = $1")
+            .bind(publication_id)
+            .execute(&self.db)
+            .await
     }
-    
+
     async fn count_publications(&self) -> Result<i64, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM publications",
-        )
-        .fetch_one(&self.db)
-        .await
+        sqlx::query_scalar("SELECT COUNT(*) FROM publications")
+            .fetch_one(&self.db)
+            .await
     }
-    
-    async fn count_publications_by_user(&self, user_id: Uuid) -> Result<i64, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM publications WHERE user_id = $1",
-        )
-        .bind(user_id)
-        .fetch_one(&self.db)
-        .await
+
+    async fn count_publications_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM publications WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&self.db)
+            .await
     }
-    
-    async fn get_publication_authors(&self, publication_id: Uuid) -> Result<Vec<super::models::Author>, sqlx::Error> {
+
+    async fn get_publication_authors(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::Author>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Author>(
             r#"
             SELECT a.id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
@@ -265,11 +274,14 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
-    async fn get_publication_citations(&self, publication_id: Uuid) -> Result<Vec<super::models::Citation>, sqlx::Error> {
+
+    async fn get_publication_citations(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::Citation>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             WHERE citing_publication_id = $1 OR cited_publication_id = $1
             ORDER BY created_at DESC
@@ -279,7 +291,7 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await
     }
-    
+
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"

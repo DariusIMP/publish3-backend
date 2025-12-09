@@ -29,7 +29,6 @@ mod tests;
 pub struct CreateCitationRequest {
     citing_publication_id: Uuid,
     cited_publication_id: Uuid,
-    citation_context: Option<String>,
 }
 
 #[post("/create")]
@@ -61,7 +60,6 @@ async fn create_citation(
     let new_citation = NewCitation {
         citing_publication_id: request.citing_publication_id,
         cited_publication_id: request.cited_publication_id,
-        citation_context: request.citation_context.clone(),
     };
 
     let citation = data
@@ -98,31 +96,32 @@ async fn get_citation(
 
 #[derive(Deserialize)]
 pub struct UpdateCitationRequest {
-    citation_context: Option<String>,
+    // No fields to update for citations
 }
 
 #[put("/{citation_id}")]
 async fn update_citation(
     citation_id: web::Path<Uuid>,
-    request: web::Json<UpdateCitationRequest>,
+    _request: web::Json<UpdateCitationRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let result = data
+    // Check if citation exists
+    let _citation = data
         .sql_client
-        .update_citation(*citation_id, request.citation_context.as_deref())
+        .get_citation(*citation_id)
         .await
         .map_err(|err| {
-            tracing::error!("Error updating citation: {}", err);
-            ErrorInternalServerError("Internal server error")
+            tracing::error!("Error retrieving citation: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Citation not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
         })?;
 
-    if result.rows_affected() == 0 {
-        return Err(ErrorNotFound("Citation not found"));
-    }
-
+    // Citations have no fields to update, just return success
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "status": "success",
-        "message": "Citation updated successfully"
+        "message": "Citation exists (no fields to update)"
     })))
 }
 

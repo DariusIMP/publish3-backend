@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::PublicationAuthorOperations,
+    db::sql::{PrivyId, PublicationAuthorOperations},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -28,7 +28,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
 #[derive(Deserialize)]
 pub struct AddAuthorToPublicationRequest {
     publication_id: Uuid,
-    author_id: Uuid,
+    author_id: PrivyId,
     author_order: Option<i32>,
 }
 
@@ -40,7 +40,7 @@ async fn add_author_to_publication(
     // Check if author is already associated with publication
     let has_author = data
         .sql_client
-        .publication_has_author(request.publication_id, request.author_id)
+        .publication_has_author(request.publication_id, &request.author_id)
         .await
         .map_err(|err| {
             tracing::error!("Error checking author association: {}", err);
@@ -53,7 +53,7 @@ async fn add_author_to_publication(
 
     // Note: We need to use the PublicationAuthorOperations trait method
     data.sql_client
-        .add_author_to_publication(request.publication_id, request.author_id, request.author_order)
+        .add_author_to_publication(request.publication_id, &request.author_id, request.author_order)
         .await
         .map_err(|err| {
             tracing::error!("Error adding author to publication: {}", err);
@@ -69,7 +69,7 @@ async fn add_author_to_publication(
 #[derive(Deserialize)]
 pub struct RemoveAuthorFromPublicationRequest {
     publication_id: Uuid,
-    author_id: Uuid,
+    author_id: PrivyId,
 }
 
 #[delete("/remove")]
@@ -79,7 +79,7 @@ async fn remove_author_from_publication(
 ) -> Result<HttpResponse, actix_web::Error> {
     let result = data
         .sql_client
-        .remove_author_from_publication(request.publication_id, request.author_id)
+        .remove_author_from_publication(request.publication_id, &request.author_id)
         .await
         .map_err(|err| {
             tracing::error!("Error removing author from publication: {}", err);
@@ -96,7 +96,7 @@ async fn remove_author_from_publication(
 #[derive(Deserialize)]
 pub struct SetPublicationAuthorsRequest {
     publication_id: Uuid,
-    author_ids: Vec<Uuid>,
+    author_ids: Vec<PrivyId>,
 }
 
 #[post("/set")]
@@ -105,7 +105,7 @@ async fn set_publication_authors(
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     // Check for duplicate author IDs
-    let unique_author_ids: Vec<Uuid> = request.author_ids
+    let unique_author_ids: Vec<PrivyId> = request.author_ids
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>()
@@ -133,7 +133,7 @@ async fn set_publication_authors(
 #[derive(Deserialize)]
 pub struct UpdateAuthorOrderRequest {
     publication_id: Uuid,
-    author_id: Uuid,
+    author_id: PrivyId,
     author_order: i32,
 }
 
@@ -144,7 +144,7 @@ async fn update_author_order(
 ) -> Result<HttpResponse, actix_web::Error> {
     let result = data
         .sql_client
-        .update_author_order(request.publication_id, request.author_id, request.author_order)
+        .update_author_order(request.publication_id, &request.author_id, request.author_order)
         .await
         .map_err(|err| {
             tracing::error!("Error updating author order: {}", err);
@@ -187,7 +187,7 @@ async fn publication_has_author(
 ) -> Result<HttpResponse, actix_web::Error> {
     let has_author = data
         .sql_client
-        .publication_has_author(query.publication_id, query.author_id)
+        .publication_has_author(query.publication_id, &query.author_id)
         .await
         .map_err(|err| {
             tracing::error!("Error checking author association: {}", err);
@@ -202,7 +202,7 @@ async fn publication_has_author(
 #[derive(Deserialize)]
 struct HasAuthorQuery {
     publication_id: Uuid,
-    author_id: Uuid,
+    author_id: PrivyId,
 }
 
 #[get("/count/{publication_id}")]
@@ -226,13 +226,13 @@ async fn count_authors_for_publication(
 
 #[get("/author/{author_id}")]
 async fn get_author_publications(
-    author_id: web::Path<Uuid>,
+    author_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
     query: web::Query<AuthorPublicationsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let publications = data
         .sql_client
-        .get_author_publications(*author_id, query.page, query.limit)
+        .get_author_publications(&author_id, query.page, query.limit)
         .await
         .map_err(|err| {
             tracing::error!("Error retrieving author publications: {}", err);
@@ -250,12 +250,12 @@ struct AuthorPublicationsQuery {
 
 #[get("/count/author/{author_id}")]
 async fn count_publications_for_author(
-    author_id: web::Path<Uuid>,
+    author_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let count = data
         .sql_client
-        .count_publications_for_author(*author_id)
+        .count_publications_for_author(&author_id)
         .await
         .map_err(|err| {
             tracing::error!("Error counting publications for author: {}", err);

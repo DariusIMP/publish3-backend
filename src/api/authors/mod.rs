@@ -4,11 +4,10 @@ use actix_web::{
     get, post, put, web,
 };
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{models::NewAuthor, AuthorOperations},
+    db::sql::{AuthorOperations, PrivyId, models::NewAuthor},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -24,6 +23,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
 
 #[derive(Deserialize)]
 pub struct CreateAuthorRequest {
+    privy_id: PrivyId,
     name: String,
     email: Option<String>,
     affiliation: Option<String>,
@@ -47,7 +47,14 @@ async fn create_author(
         }
     }
 
+    // Check if author with privy_id already exists
+    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
+    if author_by_privy_id.is_ok() {
+        return Err(ErrorConflict("Author with that privy_id already exists"));
+    }
+
     let new_author = NewAuthor {
+        privy_id: request.privy_id.clone(),
         name: request.name.clone(),
         email: request.email.clone(),
         affiliation: request.affiliation.clone(),
@@ -65,22 +72,18 @@ async fn create_author(
     Ok(HttpResponse::Ok().json(author))
 }
 
-#[get("/{author_id}")]
+#[get("/{privy_id}")]
 async fn get_author(
-    author_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let author = data
-        .sql_client
-        .get_author(*author_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error retrieving author: {}", err);
-            match err {
-                sqlx::Error::RowNotFound => ErrorNotFound("Author not found"),
-                _ => ErrorInternalServerError("Internal server error"),
-            }
-        })?;
+    let author = data.sql_client.get_author(&privy_id).await.map_err(|err| {
+        tracing::error!("Error retrieving author: {}", err);
+        match err {
+            sqlx::Error::RowNotFound => ErrorNotFound("Author not found"),
+            _ => ErrorInternalServerError("Internal server error"),
+        }
+    })?;
 
     Ok(HttpResponse::Ok().json(author))
 }
@@ -92,9 +95,9 @@ pub struct UpdateAuthorRequest {
     affiliation: Option<String>,
 }
 
-#[put("/{author_id}")]
+#[put("/{privy_id}")]
 async fn update_author(
-    author_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     request: web::Json<UpdateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
@@ -111,8 +114,10 @@ async fn update_author(
             let existing_author = data.sql_client.get_author_by_email(email).await;
             match existing_author {
                 Ok(existing) => {
-                    if existing.id != *author_id {
-                        return Err(ErrorConflict("Another author with that email already exists"));
+                    if existing.privy_id != *privy_id {
+                        return Err(ErrorConflict(
+                            "Another author with that email already exists",
+                        ));
                     }
                 }
                 Err(sqlx::Error::RowNotFound) => {
@@ -129,7 +134,7 @@ async fn update_author(
     let result = data
         .sql_client
         .update_author(
-            *author_id,
+            &privy_id,
             request.name.as_deref(),
             request.email.as_deref(),
             request.affiliation.as_deref(),
@@ -150,14 +155,14 @@ async fn update_author(
     })))
 }
 
-#[delete("/{author_id}")]
+#[delete("/{privy_id}")]
 async fn delete_author(
-    author_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let result = data
         .sql_client
-        .delete_author(*author_id)
+        .delete_author(&privy_id)
         .await
         .map_err(|err| {
             tracing::error!("Error deleting author: {}", err);
@@ -185,14 +190,10 @@ async fn list_authors(
             ErrorInternalServerError("Internal server error")
         })?;
 
-    let total_count = data
-        .sql_client
-        .count_authors()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting authors: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
+    let total_count = data.sql_client.count_authors().await.map_err(|err| {
+        tracing::error!("Error counting authors: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "authors": authors,

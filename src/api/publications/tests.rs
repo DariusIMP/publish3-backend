@@ -4,7 +4,6 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use serde_json::json;
     use sqlx::PgPool;
-    use uuid::Uuid;
 
     use crate::{
         api::tests::create_test_app,
@@ -14,7 +13,7 @@ mod tests {
     /// Helper function to create multipart form body for publication create/update
     /// Returns (boundary, body_bytes) tuple
     fn create_publication_multipart_body(
-        user_id: Option<Uuid>,
+        user_privy_id: Option<&str>,
         title: &str,
         about: Option<&str>,
         tags: Option<Vec<&str>>,
@@ -24,10 +23,10 @@ mod tests {
         let mut body = Vec::new();
 
         // Add userId field if provided
-        if let Some(user_id) = user_id {
+        if let Some(user_privy_id) = user_privy_id {
             body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
             body.extend_from_slice(b"Content-Disposition: form-data; name=\"userId\"\r\n\r\n");
-            body.extend_from_slice(user_id.to_string().as_bytes());
+            body.extend_from_slice(user_privy_id.as_bytes());
             body.extend_from_slice(b"\r\n");
         }
 
@@ -58,9 +57,11 @@ mod tests {
         if include_file {
             // Create dummy PDF content
             let pdf_content = b"%PDF-1.4\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n2 0 obj\n<</Type/Pages/Kids[]/Count 0>>\nendobj\nxref\n0 3\n0000000000 65535 f \n0000000010 00000 n \n0000000053 00000 n \ntrailer\n<</Size 3/Root 1 0 R>>\nstartxref\n94\n%%EOF";
-            
+
             body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-            body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"test.pdf\"\r\n");
+            body.extend_from_slice(
+                b"Content-Disposition: form-data; name=\"file\"; filename=\"test.pdf\"\r\n",
+            );
             body.extend_from_slice(b"Content-Type: application/pdf\r\n\r\n");
             body.extend_from_slice(pdf_content);
             body.extend_from_slice(b"\r\n");
@@ -79,11 +80,11 @@ mod tests {
         let sql_client = SqlClient::new(pool).await;
 
         // Create test user
-        let user_id = crate::api::tests::create_test_user(&sql_client).await;
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
 
         // Create multipart form body using helper function
         let (boundary, body) = create_publication_multipart_body(
-            Some(user_id),
+            Some(&user_privy_id),
             "Test Publication via POST API",
             Some("This is a test publication created via POST API"),
             Some(vec!["test", "api", "post"]),
@@ -131,8 +132,11 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let new_publication = NewPublication {
-            user_id: None,
+            user_id: user_privy_id.clone(),
             title: "Test Get Publication".to_string(),
             about: Some("Test description".to_string()),
             tags: Some(vec!["test".to_string()]),
@@ -161,9 +165,12 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         for i in 0..3 {
             let new_publication = NewPublication {
-                user_id: None,
+                user_id: user_privy_id.clone(),
                 title: format!("Publication {}", i),
                 about: Some(format!("Description {}", i)),
                 tags: Some(vec!["test".to_string()]),
@@ -194,9 +201,12 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         // Create a publication first
         let new_publication = NewPublication {
-            user_id: None,
+            user_id: user_privy_id.clone(),
             title: "Original Title".to_string(),
             about: Some("Original description".to_string()),
             tags: Some(vec!["original".to_string()]),
@@ -248,11 +258,11 @@ mod tests {
 
         let get_resp = test::call_service(&app, get_req).await;
         assert_eq!(get_resp.status(), StatusCode::OK);
-        
+
         let get_body: serde_json::Value = test::read_body_json(get_resp).await;
         assert_eq!(get_body["title"], "Updated Title");
         assert_eq!(get_body["about"], "Updated description");
-        
+
         // Check tags were updated
         let tags = get_body["tags"].as_array().unwrap();
         assert!(tags.contains(&json!("updated")));
@@ -265,9 +275,12 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         // Create test publication
         let new_publication = NewPublication {
-            user_id: None,
+            user_id: user_privy_id.clone(),
             title: "Publication to Delete".to_string(),
             about: Some("Will be deleted".to_string()),
             tags: Some(vec!["delete".to_string()]),
@@ -301,6 +314,9 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let publications = vec![
             "Machine Learning Advances",
             "Deep Learning Research",
@@ -309,7 +325,7 @@ mod tests {
 
         for title in publications {
             let new_publication = NewPublication {
-                user_id: None,
+                user_id: user_privy_id.clone(),
                 title: title.to_string(),
                 about: Some("Test description".to_string()),
                 tags: Some(vec!["ai".to_string()]),
@@ -341,6 +357,9 @@ mod tests {
         let app = test::init_service(create_test_app(pool.clone()).await).await;
         let sql_client = SqlClient::new(pool).await;
 
+        // Create test user first
+        let user_privy_id = crate::api::tests::create_test_user(&sql_client).await;
+
         let publications = vec![
             ("Paper 1", vec!["ai".to_string(), "ml".to_string()]),
             ("Paper 2", vec!["ml".to_string(), "dl".to_string()]),
@@ -349,7 +368,7 @@ mod tests {
 
         for (title, tags) in publications {
             let new_publication = NewPublication {
-                user_id: None,
+                user_id: user_privy_id.clone(),
                 title: title.to_string(),
                 about: Some("Test description".to_string()),
                 tags: Some(tags),

@@ -39,7 +39,6 @@ pub trait CitationOperations {
     async fn update_citation(
         &self,
         citation_id: Uuid,
-        citation_context: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error>;
     
     async fn delete_citation(&self, citation_id: Uuid) -> Result<PgQueryResult, sqlx::Error>;
@@ -62,14 +61,13 @@ impl CitationOperations for SqlClient {
     async fn create_citation(&self, new_citation: &super::models::NewCitation) -> Result<Citation, sqlx::Error> {
         sqlx::query_as::<_, Citation>(
             r#"
-            INSERT INTO citations (citing_publication_id, cited_publication_id, citation_context)
-            VALUES ($1, $2, $3)
-            RETURNING id, citing_publication_id, cited_publication_id, citation_context, created_at
+            INSERT INTO citations (citing_publication_id, cited_publication_id)
+            VALUES ($1, $2)
+            RETURNING id, citing_publication_id, cited_publication_id, created_at
             "#,
         )
         .bind(new_citation.citing_publication_id)
         .bind(new_citation.cited_publication_id)
-        .bind(&new_citation.citation_context)
         .fetch_one(&self.db)
         .await
     }
@@ -77,7 +75,7 @@ impl CitationOperations for SqlClient {
     async fn get_citation(&self, citation_id: Uuid) -> Result<Citation, sqlx::Error> {
         sqlx::query_as::<_, Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             WHERE id = $1
             "#,
@@ -94,7 +92,7 @@ impl CitationOperations for SqlClient {
     ) -> Result<Option<Citation>, sqlx::Error> {
         sqlx::query_as::<_, Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             WHERE citing_publication_id = $1 AND cited_publication_id = $2
             "#,
@@ -116,7 +114,7 @@ impl CitationOperations for SqlClient {
         
         sqlx::query_as::<_, Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -140,7 +138,7 @@ impl CitationOperations for SqlClient {
         
         sqlx::query_as::<_, Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             WHERE citing_publication_id = $1
             ORDER BY created_at DESC
@@ -166,7 +164,7 @@ impl CitationOperations for SqlClient {
         
         sqlx::query_as::<_, Citation>(
             r#"
-            SELECT id, citing_publication_id, cited_publication_id, citation_context, created_at
+            SELECT id, citing_publication_id, cited_publication_id, created_at
             FROM citations 
             WHERE cited_publication_id = $1
             ORDER BY created_at DESC
@@ -183,19 +181,9 @@ impl CitationOperations for SqlClient {
     async fn update_citation(
         &self,
         citation_id: Uuid,
-        citation_context: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error> {
-        sqlx::query(
-            r#"
-            UPDATE citations SET
-            citation_context = COALESCE($1, citation_context)
-            WHERE id = $2
-            "#,
-        )
-        .bind(citation_context)
-        .bind(citation_id)
-        .execute(&self.db)
-        .await
+        // Citations have no fields to update, just return empty result
+        Ok(PgQueryResult::default())
     }
     
     async fn delete_citation(&self, citation_id: Uuid) -> Result<PgQueryResult, sqlx::Error> {

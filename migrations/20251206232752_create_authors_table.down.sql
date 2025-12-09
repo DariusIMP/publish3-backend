@@ -1,2 +1,3 @@
 DROP TABLE IF EXISTS publication_authors CASCADE;
+
 DROP TABLE IF EXISTS authors CASCADE;

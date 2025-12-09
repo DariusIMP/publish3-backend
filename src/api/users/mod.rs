@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{UserOperations, models::NewUser},
+    db::sql::{PrivyId, UserOperations, models::NewUser},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -29,9 +29,8 @@ pub struct CreateUserForm {
     email: Text<String>,
     fullName: Option<Text<String>>,
     avatar: Option<TempFile>,
-    isActive: Option<Text<bool>>,
-    isAdmin: Option<Text<bool>>,
     privy_id: Text<String>,
+    // Removed: isActive, isAdmin
 }
 
 #[post("/create")]
@@ -62,7 +61,10 @@ async fn create_user(
     }
 
     // Check if user with privy_id already exists
-    let user_by_privy_id = data.sql_client.get_user_by_privy_id(&form.privy_id.0).await;
+    let user_by_privy_id = data
+        .sql_client
+        .get_user_by_privy_id(form.privy_id.0.clone())
+        .await;
     if user_by_privy_id.is_ok() {
         return Err(ErrorConflict("User with that privy_id already exists"));
     }
@@ -80,8 +82,6 @@ async fn create_user(
         email: form.email.0,
         full_name: form.fullName.map(|f| f.0),
         avatar_s3key,
-        is_active: form.isActive.map(|a| a.0),
-        is_admin: form.isAdmin.map(|a| a.0),
         privy_id: form.privy_id.0,
     };
 
@@ -97,18 +97,22 @@ async fn create_user(
     Ok(HttpResponse::Ok().json(user))
 }
 
-#[get("/{user_id}")]
+#[get("/{privy_id}")]
 async fn get_user(
-    user_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let user = data.sql_client.get_user(*user_id).await.map_err(|err| {
-        tracing::error!("Error retrieving user: {}", err);
-        match err {
-            sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
-            _ => ErrorInternalServerError("Internal server error"),
-        }
-    })?;
+    let user = data
+        .sql_client
+        .get_user(privy_id.to_string())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving user: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
 
     Ok(HttpResponse::Ok().json(user))
 }
@@ -120,13 +124,11 @@ pub struct UpdateUserForm {
     email: Option<Text<String>>,
     fullName: Option<Text<String>>,
     avatar: Option<TempFile>,
-    isActive: Option<Text<bool>>,
-    isAdmin: Option<Text<bool>>,
 }
 
-#[put("/{user_id}")]
+#[put("/{privy_id}")]
 async fn update_user(
-    user_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     MultipartForm(form): MultipartForm<UpdateUserForm>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
@@ -141,13 +143,11 @@ async fn update_user(
     let result = data
         .sql_client
         .update_user(
-            *user_id,
+            privy_id.to_string(),
             form.username.as_ref().map(|u| u.0.as_str()),
             form.email.as_ref().map(|e| e.0.as_str()),
             form.fullName.as_ref().map(|f| f.0.as_str()),
             avatar_s3key.as_deref(),
-            form.isActive.as_ref().map(|a| a.0),
-            form.isAdmin.as_ref().map(|a| a.0),
         )
         .await
         .map_err(|err| {
@@ -165,15 +165,19 @@ async fn update_user(
     })))
 }
 
-#[delete("/{user_id}")]
+#[delete("/{privy_id}")]
 async fn delete_user(
-    user_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let result = data.sql_client.delete_user(*user_id).await.map_err(|err| {
-        tracing::error!("Error deleting user: {}", err);
-        ErrorInternalServerError("Internal server error")
-    })?;
+    let result = data
+        .sql_client
+        .delete_user(privy_id.to_string())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error deleting user: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
 
     if result.rows_affected() == 0 {
         return Err(ErrorNotFound("User not found"));
@@ -215,18 +219,22 @@ struct ListUsersQuery {
     limit: Option<i64>,
 }
 
-#[get("/avatar/{user_id}")]
+#[get("/avatar/{privy_id}")]
 async fn get_user_avatar(
-    user_id: web::Path<Uuid>,
+    privy_id: web::Path<PrivyId>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let user = data.sql_client.get_user(*user_id).await.map_err(|err| {
-        tracing::error!("Error retrieving user: {}", err);
-        match err {
-            sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
-            _ => ErrorInternalServerError("Internal server error"),
-        }
-    })?;
+    let user = data
+        .sql_client
+        .get_user(privy_id.to_string())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving user: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
 
     // TODO: Implement S3 file retrieval for user avatars
     // For now, return a placeholder or no content
