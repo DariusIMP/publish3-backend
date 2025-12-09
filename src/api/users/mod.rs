@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{models::NewUser, UserOperations},
+    db::sql::{UserOperations, models::NewUser},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -27,11 +27,11 @@ pub fn config(conf: &mut web::ServiceConfig) {
 pub struct CreateUserForm {
     username: Text<String>,
     email: Text<String>,
-    password_hash: Text<String>,
     fullName: Option<Text<String>>,
     avatar: Option<TempFile>,
     isActive: Option<Text<bool>>,
     isAdmin: Option<Text<bool>>,
+    privy_id: Text<String>,
 }
 
 #[post("/create")]
@@ -61,9 +61,15 @@ async fn create_user(
         return Err(ErrorConflict("User with that username already exists"));
     }
 
+    // Check if user with privy_id already exists
+    let user_by_privy_id = data.sql_client.get_user_by_privy_id(&form.privy_id.0).await;
+    if user_by_privy_id.is_ok() {
+        return Err(ErrorConflict("User with that privy_id already exists"));
+    }
+
     // Handle avatar upload if present
     let mut avatar_s3key = None;
-    if let Some(avatar) = form.avatar {
+    if let Some(_avatar) = form.avatar {
         // TODO: Implement S3 upload for user avatars
         // For now, we'll just store a placeholder
         avatar_s3key = Some(format!("avatars/{}", Uuid::new_v4()));
@@ -72,11 +78,11 @@ async fn create_user(
     let new_user = NewUser {
         username: form.username.0,
         email: form.email.0,
-        password_hash: form.password_hash.0,
         full_name: form.fullName.map(|f| f.0),
         avatar_s3key,
         is_active: form.isActive.map(|a| a.0),
         is_admin: form.isAdmin.map(|a| a.0),
+        privy_id: form.privy_id.0,
     };
 
     let user = data
@@ -96,17 +102,13 @@ async fn get_user(
     user_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let user = data
-        .sql_client
-        .get_user(*user_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error retrieving user: {}", err);
-            match err {
-                sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
-                _ => ErrorInternalServerError("Internal server error"),
-            }
-        })?;
+    let user = data.sql_client.get_user(*user_id).await.map_err(|err| {
+        tracing::error!("Error retrieving user: {}", err);
+        match err {
+            sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
+            _ => ErrorInternalServerError("Internal server error"),
+        }
+    })?;
 
     Ok(HttpResponse::Ok().json(user))
 }
@@ -116,7 +118,6 @@ async fn get_user(
 pub struct UpdateUserForm {
     username: Option<Text<String>>,
     email: Option<Text<String>>,
-    password_hash: Option<Text<String>>,
     fullName: Option<Text<String>>,
     avatar: Option<TempFile>,
     isActive: Option<Text<bool>>,
@@ -131,7 +132,7 @@ async fn update_user(
 ) -> Result<HttpResponse, actix_web::Error> {
     // Handle avatar upload if present
     let mut avatar_s3key = None;
-    if let Some(avatar) = form.avatar {
+    if let Some(_avatar) = form.avatar {
         // TODO: Implement S3 upload for user avatars
         // For now, we'll just store a placeholder
         avatar_s3key = Some(format!("avatars/{}", Uuid::new_v4()));
@@ -143,7 +144,6 @@ async fn update_user(
             *user_id,
             form.username.as_ref().map(|u| u.0.as_str()),
             form.email.as_ref().map(|e| e.0.as_str()),
-            form.password_hash.as_ref().map(|p| p.0.as_str()),
             form.fullName.as_ref().map(|f| f.0.as_str()),
             avatar_s3key.as_deref(),
             form.isActive.as_ref().map(|a| a.0),
@@ -170,14 +170,10 @@ async fn delete_user(
     user_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let result = data
-        .sql_client
-        .delete_user(*user_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error deleting user: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
+    let result = data.sql_client.delete_user(*user_id).await.map_err(|err| {
+        tracing::error!("Error deleting user: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
 
     if result.rows_affected() == 0 {
         return Err(ErrorNotFound("User not found"));
@@ -200,14 +196,10 @@ async fn list_users(
             ErrorInternalServerError("Internal server error")
         })?;
 
-    let total_count = data
-        .sql_client
-        .count_users()
-        .await
-        .map_err(|err| {
-            tracing::error!("Error counting users: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
+    let total_count = data.sql_client.count_users().await.map_err(|err| {
+        tracing::error!("Error counting users: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "users": users,
@@ -228,17 +220,13 @@ async fn get_user_avatar(
     user_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let user = data
-        .sql_client
-        .get_user(*user_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error retrieving user: {}", err);
-            match err {
-                sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
-                _ => ErrorInternalServerError("Internal server error"),
-            }
-        })?;
+    let user = data.sql_client.get_user(*user_id).await.map_err(|err| {
+        tracing::error!("Error retrieving user: {}", err);
+        match err {
+            sqlx::Error::RowNotFound => ErrorNotFound("User not found"),
+            _ => ErrorInternalServerError("Internal server error"),
+        }
+    })?;
 
     // TODO: Implement S3 file retrieval for user avatars
     // For now, return a placeholder or no content
