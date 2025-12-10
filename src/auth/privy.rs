@@ -85,21 +85,6 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let path = req.path();
-
-        if path.starts_with("/users/privy/sign-in")
-            || path.starts_with("/users/privy/verify")
-            || path.starts_with("/health")
-            || path == "/"
-        {
-            let fut = self.service.call(req);
-            return Box::pin(async move {
-                let res = fut.await?;
-                Ok(res)
-            });
-        }
-
-        // Check for Authorization header
         let auth_header = req.headers().get("Authorization");
 
         if let Some(auth_header) = auth_header {
@@ -109,7 +94,6 @@ where
 
                     match verify_privy_token(token) {
                         Ok(claims) => {
-                            // Token is valid, attach claims to request extensions
                             req.extensions_mut().insert(claims);
                             let fut = self.service.call(req);
                             return Box::pin(async move {
@@ -125,7 +109,6 @@ where
             }
         }
 
-        // If we get here, authentication failed
         let error = actix_web::error::ErrorUnauthorized(serde_json::json!({
             "error": "Unauthorized",
             "message": "Valid Privy authentication token required"
