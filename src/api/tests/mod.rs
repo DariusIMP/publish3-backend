@@ -60,10 +60,6 @@ pub async fn create_test_user(sql_client: &SqlClient) -> String {
 
     let privy_id = format!("privy_test_user_{}", Uuid::new_v4());
     let new_user = NewUser {
-        username: format!("testuser_{}", Uuid::new_v4()),
-        email: format!("test_{}@example.com", Uuid::new_v4()),
-        full_name: Some("Test User".to_string()),
-        avatar_s3key: None,
         privy_id: privy_id.clone(),
     };
 

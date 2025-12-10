@@ -8,10 +8,6 @@ use crate::db::sql::PrivyId;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub privy_id: PrivyId,
-    pub username: String,
-    pub email: String,
-    pub full_name: Option<String>,
-    pub avatar_s3key: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -56,10 +52,6 @@ pub struct Citation {
 // New structs for creating/updating records (without auto-generated fields)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewUser {
-    pub username: String,
-    pub email: String,
-    pub full_name: Option<String>,
-    pub avatar_s3key: Option<String>,
     pub privy_id: PrivyId,
 }
 

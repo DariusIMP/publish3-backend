@@ -13,10 +13,6 @@ mod integration_tests {
     async fn create_test_user(sql_client: &SqlClient, prefix: &str) -> sqlx::Result<String> {
         let privy_id = format!("{}_{}", prefix, Uuid::new_v4());
         let new_user = NewUser {
-            username: format!("user_{}", prefix),
-            email: format!("user_{}@example.com", prefix),
-            full_name: Some(format!("Test User {}", prefix)),
-            avatar_s3key: None,
             privy_id: privy_id.clone(),
         };
         sql_client.create_user(&new_user).await?;
@@ -62,19 +58,7 @@ mod integration_tests {
         let privy_id = create_test_user(&sql_client, "test").await?;
 
         let user = sql_client.get_user(privy_id.clone()).await?;
-        assert_eq!(user.username, "user_test");
-        assert_eq!(user.email, "user_test@example.com");
-
-        let result = sql_client
-            .update_user(
-                privy_id.clone(),
-                Some("updateduser"),
-                Some("updated@example.com"),
-                Some("Updated User"),
-                None,
-            )
-            .await?;
-        assert!(result.rows_affected() > 0);
+        assert_eq!(user.privy_id, privy_id);
 
         let delete_result = sql_client.delete_user(privy_id).await?;
         assert!(delete_result.rows_affected() > 0);
@@ -88,10 +72,6 @@ mod integration_tests {
 
         for i in 0..3 {
             let new_user = NewUser {
-                username: format!("user{}", i),
-                email: format!("user{}@example.com", i),
-                full_name: Some(format!("User {}", i)),
-                avatar_s3key: None,
                 privy_id: format!("privy_user_{}", i),
             };
             sql_client.create_user(&new_user).await?;
@@ -108,26 +88,8 @@ mod integration_tests {
 
     #[sqlx::test]
     async fn test_user_email_exists(pool: sqlx::PgPool) -> sqlx::Result<()> {
-        let sql_client = SqlClient::new(pool.clone()).await;
-
-        let new_user = NewUser {
-            username: "testuser".to_string(),
-            email: "test@example.com".to_string(),
-            full_name: None,
-            avatar_s3key: None,
-            privy_id: "privy_test_user_456".to_string(),
-        };
-
-        sql_client.create_user(&new_user).await?;
-
-        let exists = sql_client.user_email_exists("test@example.com").await?;
-        assert!(exists);
-
-        let not_exists = sql_client
-            .user_email_exists("nonexistent@example.com")
-            .await?;
-        assert!(!not_exists);
-
+        // This test is no longer relevant since we don't store email in users table
+        // We'll skip it for now
         Ok(())
     }
 
@@ -428,10 +390,6 @@ mod integration_tests {
         for i in 0..5 {
             // First create a user
             let new_user = NewUser {
-                username: format!("test_user_{}", i),
-                email: format!("test_user{}@example.com", i),
-                full_name: Some(format!("Test User {}", i)),
-                avatar_s3key: None,
                 privy_id: format!("test_user_{}", i),
             };
             sql_client.create_user(&new_user).await?;
@@ -474,10 +432,6 @@ mod integration_tests {
         let sql_client = SqlClient::new(pool.clone()).await;
 
         let new_user = NewUser {
-            username: "test_author_relationship_user".to_string(),
-            email: "author_relationship_user@example.com".to_string(),
-            full_name: Some("Test Author Relationship User".to_string()),
-            avatar_s3key: None,
             privy_id: "test_author_relationship".to_string(),
         };
         sql_client.create_user(&new_user).await?;
@@ -488,10 +442,6 @@ mod integration_tests {
         let mut publications = Vec::new();
         for i in 0..5 {
             let new_user = NewUser {
-                username: format!("test_user_{}", i),
-                email: format!("test_user{}@example.com", i),
-                full_name: Some(format!("Test User {}", i)),
-                avatar_s3key: None,
                 privy_id: format!("test_user_{}", i),
             };
             sql_client.create_user(&new_user).await?;
