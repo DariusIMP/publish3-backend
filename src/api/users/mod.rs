@@ -1,6 +1,6 @@
 use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
 use actix_web::{
-    HttpResponse, delete,
+    HttpRequest, HttpResponse, delete,
     error::{ErrorConflict, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
 };
@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{PrivyId, UserOperations, models::NewUser},
+    db::sql::{
+        AuthorOperations, PrivyId, UserOperations,
+        models::{NewAuthor, NewUser},
+    },
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -18,7 +21,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(update_user)
         .service(delete_user)
         .service(list_users)
-        .service(get_user_avatar);
+        .service(get_user_avatar)
+        .service(sign_in);
     conf.service(scope);
 }
 
@@ -247,5 +251,85 @@ async fn get_user_avatar(
                 .body("Placeholder for user avatar"))
         }
         None => Ok(HttpResponse::NoContent().finish()),
+    }
+}
+
+#[post("/privy/sign-in")]
+async fn sign_in(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let privy_id = claims.sub;
+
+    let existing_user = data.sql_client.get_user_by_privy_id(privy_id.clone()).await;
+
+    match existing_user {
+        Ok(user) => {
+            let existing_author = data.sql_client.get_author(&privy_id).await;
+
+            let response = serde_json::json!({
+                "user": user,
+                "author": existing_author.ok(),
+                "is_new_user": false,
+            });
+
+            Ok(HttpResponse::Ok().json(response))
+        }
+        Err(sqlx::Error::RowNotFound) => {
+            // User doesn't exist, create new user and author
+
+            let username = format!("user_{}", &privy_id[..10].to_lowercase());
+            let email = format!("{}@privy.user", &privy_id[..10].to_lowercase());
+            let full_name = "Privy User".to_string();
+
+            let new_user = NewUser {
+                username: username.clone(),
+                email: email.clone(),
+                full_name: Some(full_name.clone()),
+                avatar_s3key: None,
+                privy_id: privy_id.clone(),
+            };
+
+            let user = data
+                .sql_client
+                .create_user(&new_user)
+                .await
+                .map_err(|err| {
+                    tracing::error!("Error creating user: {}", err);
+                    ErrorInternalServerError("Failed to create user")
+                })?;
+
+            let new_author = NewAuthor {
+                privy_id: privy_id.clone(),
+                name: full_name,
+                email: Some(email),
+                affiliation: None,
+            };
+
+            let author = data
+                .sql_client
+                .create_author(&new_author)
+                .await
+                .map_err(|err| {
+                    tracing::error!("Error creating author: {}", err);
+                    ErrorInternalServerError("Failed to create author")
+                })?;
+
+            let response = serde_json::json!({
+                "user": user,
+                "author": author,
+                "is_new_user": true,
+            });
+
+            Ok(HttpResponse::Created().json(response))
+        }
+        Err(err) => {
+            tracing::error!("Error checking user existence: {}", err);
+            Err(ErrorInternalServerError("Internal server error"))
+        }
     }
 }
