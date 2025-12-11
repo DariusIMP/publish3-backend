@@ -6,10 +6,7 @@ use actix_web::{
 
 use crate::{
     AppState,
-    db::sql::{
-        AuthorOperations, PrivyId, UserOperations,
-        models::{NewAuthor, NewUser},
-    },
+    db::sql::{AuthorOperations, PrivyId, UserOperations, models::NewUser},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -159,13 +156,11 @@ async fn sign_in(
             let response = serde_json::json!({
                 "user": user,
                 "author": existing_author.ok(),
-                "is_new_user": false,
             });
 
             Ok(HttpResponse::Ok().json(response))
         }
         Err(sqlx::Error::RowNotFound) => {
-            // User doesn't exist, create new user and author
             let new_user = NewUser {
                 privy_id: privy_id.clone(),
             };
@@ -179,26 +174,8 @@ async fn sign_in(
                     ErrorInternalServerError("Failed to create user")
                 })?;
 
-            let new_author = NewAuthor {
-                privy_id: privy_id.clone(),
-                name: "Privy User".to_string(),
-                email: None,
-                affiliation: None,
-            };
-
-            let author = data
-                .sql_client
-                .create_author(&new_author)
-                .await
-                .map_err(|err| {
-                    tracing::error!("Error creating author: {}", err);
-                    ErrorInternalServerError("Failed to create author")
-                })?;
-
             let response = serde_json::json!({
                 "user": user,
-                "author": author,
-                "is_new_user": true,
             });
 
             Ok(HttpResponse::Created().json(response))

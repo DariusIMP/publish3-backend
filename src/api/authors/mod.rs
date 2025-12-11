@@ -34,7 +34,6 @@ async fn create_author(
     request: web::Json<CreateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    // Check if author with email already exists (if email provided)
     if let Some(email) = &request.email {
         let email_exists = data
             .sql_client
@@ -47,7 +46,6 @@ async fn create_author(
         }
     }
 
-    // Check if author with privy_id already exists
     let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
     if author_by_privy_id.is_ok() {
         return Err(ErrorConflict("Author with that privy_id already exists"));
