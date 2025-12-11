@@ -32,7 +32,7 @@ async fn create_user(
         .sql_client
         .get_user_by_privy_id(body.privy_id.clone())
         .await;
-    
+
     if user_by_privy_id.is_ok() {
         return Err(ErrorConflict("User with that privy_id already exists"));
     }
@@ -75,7 +75,14 @@ async fn get_user(
             }
         })?;
 
-    Ok(HttpResponse::Ok().json(user))
+    let author = data.sql_client.get_author(&privy_id).await.ok();
+
+    let response = serde_json::json!({
+        "user": user,
+        "author": author,
+    });
+
+    Ok(HttpResponse::Ok().json(response))
 }
 
 #[delete("/{privy_id}")]
