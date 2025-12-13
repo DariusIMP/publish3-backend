@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{PrivyId, PublicationOperations, models::NewPublication},
+    db::sql::{
+        CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations,
+        models::NewPublication,
+    },
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -22,7 +25,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_publication)
         .service(update_publication)
         .service(delete_publication)
-        .service(get_publication_authors)
+        .service(get_publication_authors_handler)
         .service(get_publication_citations)
         .service(get_cited_by);
     conf.service(scope);
@@ -34,18 +37,26 @@ mod tests;
 #[derive(MultipartForm)]
 #[allow(non_snake_case)]
 pub struct CreatePublicationForm {
-    userId: Text<PrivyId>, // TODO: a publication can have multiple authors, add a list of authors
     title: Text<String>,
     about: Option<Text<String>>,
     tags: Option<Text<String>>,
+    authors: Option<Text<String>>,   // JSON array of author privy_ids
+    citations: Option<Text<String>>, // JSON array of publication UUIDs to cite
     file: Option<TempFile>,
 }
 
 #[post("/create")]
 async fn create_publication(
+    req: actix_web::HttpRequest,
     MultipartForm(form): MultipartForm<CreatePublicationForm>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    // Get user ID from authenticated user
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
     // Parse tags from JSON array string
     let tags = if let Some(tags_text) = &form.tags {
         match serde_json::from_str::<Vec<String>>(&tags_text.0) {
@@ -53,6 +64,36 @@ async fn create_publication(
             Err(err) => {
                 tracing::error!("Failed to parse tags JSON: {}", err);
                 return Err(ErrorBadRequest("Invalid tags format. Expected JSON array"));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Parse authors from JSON array string
+    let authors = if let Some(authors_text) = &form.authors {
+        match serde_json::from_str::<Vec<PrivyId>>(&authors_text.0) {
+            Ok(authors) => Some(authors),
+            Err(err) => {
+                tracing::error!("Failed to parse authors JSON: {}", err);
+                return Err(ErrorBadRequest(
+                    "Invalid authors format. Expected JSON array of author IDs",
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Parse citations from JSON array string
+    let citations = if let Some(citations_text) = &form.citations {
+        match serde_json::from_str::<Vec<Uuid>>(&citations_text.0) {
+            Ok(citations) => Some(citations),
+            Err(err) => {
+                tracing::error!("Failed to parse citations JSON: {}", err);
+                return Err(ErrorBadRequest(
+                    "Invalid citations format. Expected JSON array of publication UUIDs",
+                ));
             }
         }
     } else {
@@ -84,7 +125,7 @@ async fn create_publication(
     }
 
     let new_publication = NewPublication {
-        user_id: form.userId.0,
+        user_id,
         title: form.title.0,
         about: form.about.map(|a| a.0),
         tags,
@@ -99,6 +140,74 @@ async fn create_publication(
             tracing::error!("Error creating publication: {}", err);
             ErrorInternalServerError("Internal server error")
         })?;
+
+    // Associate authors with the publication if any are provided
+    if let Some(author_ids) = authors {
+        if let Err(err) = data
+            .sql_client
+            .set_publication_authors(publication.id, &author_ids)
+            .await
+        {
+            tracing::error!(
+                "Error setting authors for publication {}: {}",
+                publication.id,
+                err
+            );
+            // Continue even if setting authors fails
+        }
+    }
+
+    // Create citations if any are provided
+    if let Some(cited_publication_ids) = citations {
+        for cited_publication_id in cited_publication_ids {
+            // Check that we're not citing ourselves
+            if cited_publication_id == publication.id {
+                tracing::warn!(
+                    "Publication {} attempted to cite itself, skipping",
+                    publication.id
+                );
+                continue;
+            }
+
+            // Check if citation already exists
+            let existing_citation = data
+                .sql_client
+                .get_citation_by_publications(publication.id, cited_publication_id)
+                .await;
+
+            match existing_citation {
+                Ok(Some(_)) => {
+                    tracing::warn!(
+                        "Citation already exists between {} and {}, skipping",
+                        publication.id,
+                        cited_publication_id
+                    );
+                    continue;
+                }
+                Ok(None) => {
+                    // Create the citation
+                    let new_citation = crate::db::sql::models::NewCitation {
+                        citing_publication_id: publication.id,
+                        cited_publication_id,
+                    };
+
+                    if let Err(err) = data.sql_client.create_citation(&new_citation).await {
+                        tracing::error!(
+                            "Error creating citation from {} to {}: {}",
+                            publication.id,
+                            cited_publication_id,
+                            err
+                        );
+                        // Continue with other citations even if one fails
+                    }
+                }
+                Err(err) => {
+                    tracing::error!("Error checking existing citation: {}", err);
+                    // Continue with other citations
+                }
+            }
+        }
+    }
 
     Ok(HttpResponse::Ok().json(publication))
 }
@@ -373,21 +482,20 @@ struct SearchByTagQuery {
 }
 
 #[get("/{publication_id}/authors")]
-async fn get_publication_authors(
+async fn get_publication_authors_handler(
     publication_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let authors = data
-        .sql_client
-        .get_publication_authors(*publication_id)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error retrieving publication authors: {}", err);
-            match err {
-                sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
-                _ => ErrorInternalServerError("Internal server error"),
-            }
-        })?;
+    let authors =
+        PublicationAuthorOperations::get_publication_authors(&*data.sql_client, *publication_id)
+            .await
+            .map_err(|err| {
+                tracing::error!("Error retrieving publication authors: {}", err);
+                match err {
+                    sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
+                    _ => ErrorInternalServerError("Internal server error"),
+                }
+            })?;
 
     Ok(HttpResponse::Ok().json(authors))
 }

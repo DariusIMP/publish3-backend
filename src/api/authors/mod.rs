@@ -13,10 +13,10 @@ use crate::{
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/authors")
         .service(create_author)
+        .service(list_authors)
         .service(get_author)
         .service(update_author)
         .service(delete_author)
-        .service(list_authors)
         .service(search_authors);
     conf.service(scope);
 }
