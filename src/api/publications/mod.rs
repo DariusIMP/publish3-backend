@@ -27,7 +27,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(delete_publication)
         .service(get_publication_authors_handler)
         .service(get_publication_citations)
-        .service(get_cited_by);
+        .service(get_cited_by)
+        .service(get_publication_pdf_url);
     conf.service(scope);
 }
 
@@ -110,11 +111,14 @@ async fn create_publication(
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unnamed.pdf".to_string());
 
-        let s3_path = format!("publications/{}/{}", Uuid::new_v4(), file_name);
+        let publication_uuid = Uuid::new_v4();
+        let s3_directory = format!("publications/{}", publication_uuid);
+        let s3_path = format!("{}/{}", s3_directory, file_name);
 
         // Use upload_storage_files which expects Vec<TempFile>
+        // Pass directory path, not full file path
         data.s3_client
-            .upload_storage_files(vec![file], Some(s3_path.clone().into()))
+            .upload_storage_files(vec![file], Some(s3_directory.into()))
             .await
             .map_err(|err| {
                 tracing::error!("Error uploading file to S3: {}", err);
@@ -265,11 +269,11 @@ async fn get_publication(
         "title": publication.title,
         "about": publication.about,
         "tags": publication.tags,
-        "s3key": publication.s3key,
         "created_at": publication.created_at,
         "updated_at": publication.updated_at,
         "authors": authors,
         "citation_count": citation_count,
+        "has_pdf": publication.s3key.is_some(),
     });
 
     Ok(HttpResponse::Ok().json(response))
@@ -314,11 +318,12 @@ async fn update_publication(
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unnamed.pdf".to_string());
 
-        let s3_path = format!("publications/{}/{}", Uuid::new_v4(), file_name);
+        let publication_uuid = Uuid::new_v4();
+        let s3_directory = format!("publications/{}", publication_uuid);
+        let s3_path = format!("{}/{}", s3_directory, file_name);
 
-        // Use upload_storage_files which expects Vec<TempFile>
         data.s3_client
-            .upload_storage_files(vec![file], Some(s3_path.clone().into()))
+            .upload_storage_files(vec![file], Some(s3_directory.into()))
             .await
             .map_err(|err| {
                 tracing::error!("Error uploading file to S3: {}", err);
@@ -424,7 +429,7 @@ async fn list_publications(
 
     // Transform to include authors and citation counts in each publication
     let mut publications: Vec<serde_json::Value> = Vec::new();
-    
+
     for (publication, authors) in publications_with_authors {
         // Get citation count for this publication
         let citation_count = data
@@ -432,7 +437,11 @@ async fn list_publications(
             .get_citation_count(publication.id)
             .await
             .map_err(|err| {
-                tracing::error!("Error retrieving citation count for publication {}: {}", publication.id, err);
+                tracing::error!(
+                    "Error retrieving citation count for publication {}: {}",
+                    publication.id,
+                    err
+                );
                 ErrorInternalServerError("Internal server error")
             })?;
 
@@ -442,11 +451,11 @@ async fn list_publications(
             "title": publication.title,
             "about": publication.about,
             "tags": publication.tags,
-            "s3key": publication.s3key,
             "created_at": publication.created_at,
             "updated_at": publication.updated_at,
             "authors": authors,
             "citation_count": citation_count,
+            "has_pdf": publication.s3key.is_some(),
         }));
     }
 
@@ -609,4 +618,40 @@ async fn get_cited_by(
         })?;
 
     Ok(HttpResponse::Ok().json(cited_by))
+}
+
+#[get("/{publication_id}/pdf-url")]
+async fn get_publication_pdf_url(
+    publication_id: web::Path<Uuid>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let publication = data
+        .sql_client
+        .get_publication(*publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    let s3key = publication
+        .s3key
+        .ok_or_else(|| ErrorNotFound("Publication does not have an associated PDF file"))?;
+
+    let pdf_url = data
+        .s3_client
+        .get_file_url(&s3key, &crate::db::s3::S3Bucket::Storage)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error generating PDF URL: {}", err);
+            ErrorInternalServerError("Failed to generate PDF URL")
+        })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "pdf_url": pdf_url,
+        "expires_in": "5 minutes" // Presigned URL expires in 5 minutes
+    })))
 }
