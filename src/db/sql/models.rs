@@ -42,6 +42,16 @@ pub struct PublicationAuthor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PublicationAuthorWithDetails {
+    pub publication_id: Uuid,
+    pub author_id: PrivyId,
+    pub author_order: i32,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub author_affiliation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Citation {
     pub id: Uuid,
     pub citing_publication_id: Uuid,

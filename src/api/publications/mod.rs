@@ -229,7 +229,50 @@ async fn get_publication(
             }
         })?;
 
-    Ok(HttpResponse::Ok().json(publication))
+    let authors_with_details = data
+        .sql_client
+        .get_publication_authors_with_details(*publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication authors: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    let authors: Vec<serde_json::Value> = authors_with_details
+        .into_iter()
+        .map(|author_detail| {
+            serde_json::json!({
+                "privy_id": author_detail.author_id,
+                "name": author_detail.author_name,
+                "email": author_detail.author_email,
+                "affiliation": author_detail.author_affiliation,
+            })
+        })
+        .collect();
+
+    let citation_count = data
+        .sql_client
+        .get_citation_count(*publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving citation count: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    let response = serde_json::json!({
+        "id": publication.id,
+        "user_id": publication.user_id,
+        "title": publication.title,
+        "about": publication.about,
+        "tags": publication.tags,
+        "s3key": publication.s3key,
+        "created_at": publication.created_at,
+        "updated_at": publication.updated_at,
+        "authors": authors,
+        "citation_count": citation_count,
+    });
+
+    Ok(HttpResponse::Ok().json(response))
 }
 
 #[derive(MultipartForm)]
@@ -365,9 +408,9 @@ async fn list_publications(
     data: web::Data<AppState>,
     query: web::Query<ListPublicationsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let publications = data
+    let publications_with_authors = data
         .sql_client
-        .list_publications(query.page, query.limit)
+        .list_publications_with_authors(query.page, query.limit)
         .await
         .map_err(|err| {
             tracing::error!("Error listing publications: {}", err);
@@ -378,6 +421,34 @@ async fn list_publications(
         tracing::error!("Error counting publications: {}", err);
         ErrorInternalServerError("Internal server error")
     })?;
+
+    // Transform to include authors and citation counts in each publication
+    let mut publications: Vec<serde_json::Value> = Vec::new();
+    
+    for (publication, authors) in publications_with_authors {
+        // Get citation count for this publication
+        let citation_count = data
+            .sql_client
+            .get_citation_count(publication.id)
+            .await
+            .map_err(|err| {
+                tracing::error!("Error retrieving citation count for publication {}: {}", publication.id, err);
+                ErrorInternalServerError("Internal server error")
+            })?;
+
+        publications.push(serde_json::json!({
+            "id": publication.id,
+            "user_id": publication.user_id,
+            "title": publication.title,
+            "about": publication.about,
+            "tags": publication.tags,
+            "s3key": publication.s3key,
+            "created_at": publication.created_at,
+            "updated_at": publication.updated_at,
+            "authors": authors,
+            "citation_count": citation_count,
+        }));
+    }
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "publications": publications,
