@@ -39,11 +39,11 @@ mod tests;
 #[allow(non_snake_case)]
 pub struct CreatePublicationForm {
     title: Text<String>,
-    about: Option<Text<String>>,
-    tags: Option<Text<String>>,
-    authors: Option<Text<String>>,   // JSON array of author privy_ids
-    citations: Option<Text<String>>, // JSON array of publication UUIDs to cite
-    file: Option<TempFile>,
+    about: Text<String>,
+    tags: Text<String>,
+    authors: Text<String>,   // JSON array of author privy_ids
+    citations: Text<String>, // JSON array of publication UUIDs to cite
+    file: TempFile,
 }
 
 #[post("/create")]
@@ -58,81 +58,61 @@ async fn create_publication(
     })?;
 
     let user_id = claims.sub;
-    // Parse tags from JSON array string
-    let tags = if let Some(tags_text) = &form.tags {
-        match serde_json::from_str::<Vec<String>>(&tags_text.0) {
-            Ok(tags) => Some(tags),
-            Err(err) => {
-                tracing::error!("Failed to parse tags JSON: {}", err);
-                return Err(ErrorBadRequest("Invalid tags format. Expected JSON array"));
-            }
+    let tags = match serde_json::from_str::<Vec<String>>(&form.tags.0) {
+        Ok(tags) => tags,
+        Err(err) => {
+            tracing::error!("Failed to parse tags JSON: {}", err);
+            return Err(ErrorBadRequest("Invalid tags format. Expected JSON array"));
         }
-    } else {
-        None
     };
 
-    // Parse authors from JSON array string
-    let authors = if let Some(authors_text) = &form.authors {
-        match serde_json::from_str::<Vec<PrivyId>>(&authors_text.0) {
-            Ok(authors) => Some(authors),
-            Err(err) => {
-                tracing::error!("Failed to parse authors JSON: {}", err);
-                return Err(ErrorBadRequest(
-                    "Invalid authors format. Expected JSON array of author IDs",
-                ));
-            }
+    // Parse authors from JSON array string (now mandatory)
+    let authors = match serde_json::from_str::<Vec<PrivyId>>(&form.authors.0) {
+        Ok(authors) => authors,
+        Err(err) => {
+            tracing::error!("Failed to parse authors JSON: {}", err);
+            return Err(ErrorBadRequest(
+                "Invalid authors format. Expected JSON array of author IDs",
+            ));
         }
-    } else {
-        None
     };
 
-    // Parse citations from JSON array string
-    let citations = if let Some(citations_text) = &form.citations {
-        match serde_json::from_str::<Vec<Uuid>>(&citations_text.0) {
-            Ok(citations) => Some(citations),
-            Err(err) => {
-                tracing::error!("Failed to parse citations JSON: {}", err);
-                return Err(ErrorBadRequest(
-                    "Invalid citations format. Expected JSON array of publication UUIDs",
-                ));
-            }
+    let citations = match serde_json::from_str::<Vec<Uuid>>(&form.citations.0) {
+        Ok(citations) => citations,
+        Err(err) => {
+            tracing::error!("Failed to parse citations JSON: {}", err);
+            return Err(ErrorBadRequest(
+                "Invalid citations format. Expected JSON array of publication UUIDs",
+            ));
         }
-    } else {
-        None
     };
 
-    // Handle file upload if present
-    let mut s3key = None;
-    if let Some(file) = form.file {
-        // Upload file to S3 using the storage bucket
-        let file_name = file
-            .file_name
-            .as_ref()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "unnamed.pdf".to_string());
+    let file = form.file;
+    let file_name = file
+        .file_name
+        .as_ref()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unnamed.pdf".to_string());
 
-        let publication_uuid = Uuid::new_v4();
-        let s3_directory = format!("publications/{}", publication_uuid);
-        let s3_path = format!("{}/{}", s3_directory, file_name);
+    let publication_uuid = Uuid::new_v4();
+    let s3_directory = format!("publications/{}", publication_uuid);
+    let s3_path = format!("{}/{}", s3_directory, file_name);
 
-        // Use upload_storage_files which expects Vec<TempFile>
-        // Pass directory path, not full file path
-        data.s3_client
-            .upload_storage_files(vec![file], Some(s3_directory.into()))
-            .await
-            .map_err(|err| {
-                tracing::error!("Error uploading file to S3: {}", err);
-                ErrorInternalServerError("Failed to upload file")
-            })?;
+    data.s3_client
+        .upload_storage_files(vec![file], Some(s3_directory.into()))
+        .await
+        .map_err(|err| {
+            tracing::error!("Error uploading file to S3: {}", err);
+            ErrorInternalServerError("Failed to upload file")
+        })?;
 
-        s3key = Some(s3_path);
-    }
+    let s3key = Some(s3_path);
 
     let new_publication = NewPublication {
         user_id,
         title: form.title.0,
-        about: form.about.map(|a| a.0),
-        tags,
+        about: Some(form.about.0),
+        tags: Some(tags),
         s3key,
     };
 
@@ -145,70 +125,60 @@ async fn create_publication(
             ErrorInternalServerError("Internal server error")
         })?;
 
-    // Associate authors with the publication if any are provided
-    if let Some(author_ids) = authors {
-        if let Err(err) = data
-            .sql_client
-            .set_publication_authors(publication.id, &author_ids)
-            .await
-        {
-            tracing::error!(
-                "Error setting authors for publication {}: {}",
-                publication.id,
-                err
-            );
-            // Continue even if setting authors fails
-        }
+    if let Err(err) = data
+        .sql_client
+        .set_publication_authors(publication.id, &authors)
+        .await
+    {
+        tracing::error!(
+            "Error setting authors for publication {}: {}",
+            publication.id,
+            err
+        );
     }
 
-    // Create citations if any are provided
-    if let Some(cited_publication_ids) = citations {
-        for cited_publication_id in cited_publication_ids {
-            // Check that we're not citing ourselves
-            if cited_publication_id == publication.id {
+    for cited_publication_id in citations {
+        if cited_publication_id == publication.id {
+            tracing::warn!(
+                "Publication {} attempted to cite itself, skipping",
+                publication.id
+            );
+            continue;
+        }
+
+        // Check if citation already exists
+        let existing_citation = data
+            .sql_client
+            .get_citation_by_publications(publication.id, cited_publication_id)
+            .await;
+
+        match existing_citation {
+            Ok(Some(_)) => {
                 tracing::warn!(
-                    "Publication {} attempted to cite itself, skipping",
-                    publication.id
+                    "Citation already exists between {} and {}, skipping",
+                    publication.id,
+                    cited_publication_id
                 );
                 continue;
             }
+            Ok(None) => {
+                // Create the citation
+                let new_citation = crate::db::sql::models::NewCitation {
+                    citing_publication_id: publication.id,
+                    cited_publication_id,
+                };
 
-            // Check if citation already exists
-            let existing_citation = data
-                .sql_client
-                .get_citation_by_publications(publication.id, cited_publication_id)
-                .await;
-
-            match existing_citation {
-                Ok(Some(_)) => {
-                    tracing::warn!(
-                        "Citation already exists between {} and {}, skipping",
+                if let Err(err) = data.sql_client.create_citation(&new_citation).await {
+                    tracing::error!(
+                        "Error creating citation from {} to {}: {}",
                         publication.id,
-                        cited_publication_id
-                    );
-                    continue;
-                }
-                Ok(None) => {
-                    // Create the citation
-                    let new_citation = crate::db::sql::models::NewCitation {
-                        citing_publication_id: publication.id,
                         cited_publication_id,
-                    };
-
-                    if let Err(err) = data.sql_client.create_citation(&new_citation).await {
-                        tracing::error!(
-                            "Error creating citation from {} to {}: {}",
-                            publication.id,
-                            cited_publication_id,
-                            err
-                        );
-                        // Continue with other citations even if one fails
-                    }
+                        err
+                    );
                 }
-                Err(err) => {
-                    tracing::error!("Error checking existing citation: {}", err);
-                    // Continue with other citations
-                }
+            }
+            Err(err) => {
+                tracing::error!("Error checking existing citation: {}", err);
             }
         }
     }
