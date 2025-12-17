@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
@@ -91,16 +90,18 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            INSERT INTO publications (user_id, title, about, tags, s3key)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, user_id, title, about, tags, s3key, created_at, updated_at
+            INSERT INTO publications (user_id, title, about, tags, s3key, price, citation_royalty_bps)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             "#,
         )
         .bind(&new_publication.user_id)
         .bind(&new_publication.title)
         .bind(&new_publication.about)
-        .bind(new_publication.tags.as_deref().unwrap_or(&[]))
+        .bind(&new_publication.tags)
         .bind(&new_publication.s3key)
+        .bind(new_publication.price)
+        .bind(new_publication.citation_royalty_bps)
         .fetch_one(&self.db)
         .await
     }
@@ -108,7 +109,7 @@ impl PublicationOperations for SqlClient {
     async fn get_publication(&self, publication_id: Uuid) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             WHERE id = $1
             "#,
@@ -129,7 +130,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -153,7 +154,7 @@ impl PublicationOperations for SqlClient {
         // First get publications
         let publications = sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -167,8 +168,10 @@ impl PublicationOperations for SqlClient {
         // Then get authors for each publication using the new method
         let mut result = Vec::new();
         for publication in publications {
-            let authors_with_details = self.get_publication_authors_with_details(publication.id).await?;
-            
+            let authors_with_details = self
+                .get_publication_authors_with_details(publication.id)
+                .await?;
+
             // Convert PublicationAuthorWithDetails to Author format for frontend compatibility
             let authors: Vec<super::models::Author> = authors_with_details
                 .into_iter()
@@ -181,7 +184,7 @@ impl PublicationOperations for SqlClient {
                     updated_at: chrono::Utc::now(), // Placeholder - we don't have this info
                 })
                 .collect();
-                
+
             result.push((publication, authors));
         }
 
@@ -200,7 +203,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -227,7 +230,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             WHERE title ILIKE $1
             ORDER BY title ASC
@@ -253,7 +256,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
             FROM publications 
             WHERE $1 = ANY(tags)
             ORDER BY created_at DESC
@@ -356,7 +359,7 @@ impl PublicationOperations for SqlClient {
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.created_at, p.updated_at
+            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.created_at, p.updated_at
             FROM publications p
             INNER JOIN citations c ON p.id = c.citing_publication_id
             WHERE c.cited_publication_id = $1

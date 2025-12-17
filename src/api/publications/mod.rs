@@ -1,12 +1,3 @@
-use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
-use actix_web::{
-    HttpResponse, delete,
-    error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
-    get, post, put, web,
-};
-use serde::Deserialize;
-use uuid::Uuid;
-
 use crate::{
     AppState,
     db::sql::{
@@ -14,6 +5,15 @@ use crate::{
         models::NewPublication,
     },
 };
+use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
+use actix_web::{
+    HttpResponse, delete,
+    error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
+    get, post, put, web,
+};
+use serde::Deserialize;
+use std::io::Read;
+use uuid::Uuid;
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/publications")
@@ -40,16 +40,18 @@ mod tests;
 pub struct CreatePublicationForm {
     title: Text<String>,
     about: Text<String>,
-    tags: Text<String>,
-    authors: Text<String>,   // JSON array of author privy_ids
-    citations: Text<String>, // JSON array of publication UUIDs to cite
-    file: TempFile,
+    tags: Text<String>,              // JSON array of tags (required)
+    authors: Text<String>,           // JSON array of author privy_ids (required)
+    citations: Text<String>, // JSON array of publication UUIDs to cite (required, can be empty array)
+    price: Text<i64>,        // Price as i64 (required)
+    citation_royalty_bps: Text<i64>, // Citation royalty as i64 (required)
+    file: TempFile,          // PDF file (required)
 }
 
 #[post("/create")]
 async fn create_publication(
     req: actix_web::HttpRequest,
-    MultipartForm(form): MultipartForm<CreatePublicationForm>,
+    MultipartForm(mut form): MultipartForm<CreatePublicationForm>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     // Get user ID from authenticated user
@@ -87,8 +89,17 @@ async fn create_publication(
         }
     };
 
-    let file = form.file;
-    let file_name = file
+    let mut file_content = Vec::new();
+    if let Err(err) = form.file.file.read_to_end(&mut file_content) {
+        tracing::error!("Failed to read uploaded file: {}", err);
+        return Err(ErrorBadRequest("Failed to read uploaded file"));
+    }
+
+    // TODO: Compute SHA3-256 hash (matches Move's hash::sha3_256)
+    let _paper_hash = aptos_crypto::hash::HashValue::sha3_256_of(&file_content).to_vec();
+
+    let file_name = form
+        .file
         .file_name
         .as_ref()
         .map(|n| n.to_string())
@@ -96,24 +107,24 @@ async fn create_publication(
 
     let publication_uuid = Uuid::new_v4();
     let s3_directory = format!("publications/{}", publication_uuid);
-    let s3_path = format!("{}/{}", s3_directory, file_name);
+    let s3key = format!("{}/{}", s3_directory, file_name);
 
     data.s3_client
-        .upload_storage_files(vec![file], Some(s3_directory.into()))
+        .upload_storage_files(vec![form.file], Some(s3_directory.into()))
         .await
         .map_err(|err| {
             tracing::error!("Error uploading file to S3: {}", err);
             ErrorInternalServerError("Failed to upload file")
         })?;
 
-    let s3key = Some(s3_path);
-
     let new_publication = NewPublication {
-        user_id,
+        user_id: user_id.clone(),
         title: form.title.0,
-        about: Some(form.about.0),
-        tags: Some(tags),
+        about: form.about.0,
+        tags,
         s3key,
+        price: form.price.0,
+        citation_royalty_bps: form.citation_royalty_bps.0,
     };
 
     let publication = data
@@ -243,7 +254,6 @@ async fn get_publication(
         "updated_at": publication.updated_at,
         "authors": authors,
         "citation_count": citation_count,
-        "has_pdf": publication.s3key.is_some(),
     });
 
     Ok(HttpResponse::Ok().json(response))
@@ -347,16 +357,14 @@ async fn delete_publication(
             }
         })?;
 
-    // Delete S3 file if it exists
-    if let Some(s3key) = &publication.s3key {
-        // Extract just the filename from the path for deletion
-        if let Some(file_name) = s3key.split('/').last() {
+    if !publication.s3key.is_empty() {
+        if let Some(file_name) = publication.s3key.split('/').last() {
             if let Err(err) = data
                 .s3_client
                 .delete_storage_files(vec![file_name.to_string()], None)
                 .await
             {
-                tracing::warn!("Failed to delete S3 file {}: {}", s3key, err);
+                tracing::warn!("Failed to delete S3 file {}: {}", publication.s3key, err);
                 // Continue with database deletion even if S3 deletion fails
             }
         }
@@ -425,7 +433,6 @@ async fn list_publications(
             "updated_at": publication.updated_at,
             "authors": authors,
             "citation_count": citation_count,
-            "has_pdf": publication.s3key.is_some(),
         }));
     }
 
@@ -590,6 +597,7 @@ async fn get_cited_by(
     Ok(HttpResponse::Ok().json(cited_by))
 }
 
+// TODO: remove endpoint
 #[get("/{publication_id}/pdf-url")]
 async fn get_publication_pdf_url(
     publication_id: web::Path<Uuid>,
@@ -607,13 +615,15 @@ async fn get_publication_pdf_url(
             }
         })?;
 
-    let s3key = publication
-        .s3key
-        .ok_or_else(|| ErrorNotFound("Publication does not have an associated PDF file"))?;
+    if publication.s3key.is_empty() {
+        return Err(ErrorNotFound(
+            "Publication does not have an associated PDF file",
+        ));
+    }
 
     let pdf_url = data
         .s3_client
-        .get_file_url(&s3key, &crate::db::s3::S3Bucket::Storage)
+        .get_file_url(&publication.s3key, &crate::db::s3::S3Bucket::Storage)
         .await
         .map_err(|err| {
             tracing::error!("Error generating PDF URL: {}", err);

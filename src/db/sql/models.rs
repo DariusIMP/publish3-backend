@@ -25,11 +25,13 @@ pub struct Author {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Publication {
     pub id: Uuid,
-    pub user_id: Option<PrivyId>,
+    pub user_id: PrivyId,
     pub title: String,
-    pub about: Option<String>,
+    pub about: String,
     pub tags: Vec<String>,
-    pub s3key: Option<String>,
+    pub s3key: String,
+    pub price: i64,
+    pub citation_royalty_bps: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -77,9 +79,11 @@ pub struct NewAuthor {
 pub struct NewPublication {
     pub user_id: PrivyId,
     pub title: String,
-    pub about: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub s3key: Option<String>,
+    pub about: String,
+    pub tags: Vec<String>,
+    pub s3key: String,
+    pub price: i64,
+    pub citation_royalty_bps: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
