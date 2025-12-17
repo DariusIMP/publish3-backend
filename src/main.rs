@@ -20,6 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 pub mod api;
 pub mod auth;
+// pub mod blockchain;
 pub mod common;
 pub mod config;
 pub mod db;
@@ -28,6 +29,7 @@ pub struct AppState {
     sql_client: Arc<SqlClient>,
     redis_client: Client,
     s3_client: Arc<S3Client>,
+    // movement_client: Arc<blockchain::MovementClient>,
 }
 
 lazy_static! {
@@ -92,6 +94,17 @@ async fn main() -> std::io::Result<()> {
         .await
         .unwrap();
 
+    // let movement_client = match blockchain::MovementClient::new(Arc::new(CONFIG.clone())) {
+    //     Ok(client) => {
+    //         println!("✅ Movement blockchain client initialized!");
+    //         Arc::new(client)
+    //     }
+    //     Err(err) => {
+    //         println!("🔥 Failed to initialize Movement client: {}", err);
+    //         std::process::exit(1);
+    //     }
+    // };
+
     let address = format!("{}:{}", CONFIG.server_address, CONFIG.server_port);
 
     tracing::info!("starting HTTP server at http://{address}");
@@ -101,6 +114,7 @@ async fn main() -> std::io::Result<()> {
                 sql_client: sql_client.clone(),
                 redis_client: redis_client.clone(),
                 s3_client: s3_client.clone(),
+                // movement_client: movement_client.clone(),
             }))
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())

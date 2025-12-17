@@ -16,10 +16,19 @@ pub struct Config {
     pub s3_secret_key: String,
     pub s3_endpoint: String,
 
+    // Movement blockchain configuration
+    pub movement_network: String,
+    pub movement_rpc_url: String,
+    pub contract_address: String,
+
     // Privy authentication
     pub privy_app_id: String,
     pub privy_app_secret: String,
     pub privy_jwt_verification_key: Vec<u8>,
+
+    // Backend signing key for capabilities
+    pub backend_private_key: String,
+    pub backend_public_key: String,
 }
 
 impl Config {
@@ -36,12 +45,21 @@ impl Config {
         let s3_secret_key = get_env_var("S3_SECRET_KEY");
         let s3_endpoint = get_env_var("S3_ENDPOINT");
 
+        // Movement blockchain configuration
+        let movement_network = get_env_var("MOVEMENT_NETWORK");
+        let movement_rpc_url = get_env_var("MOVEMENT_RPC_URL");
+        let contract_address = get_env_var("CONTRACT_ADDRESS");
+
         // Privy configuration
         let privy_app_id = get_env_var("PRIVY_APP_ID");
         let privy_app_secret = get_env_var("PRIVY_APP_SECRET");
         let privy_jwt_verification_key = base64::decode(get_env_var("PRIVY_JWT_VERIFICATION_KEY"))
             .unwrap_or_else(|_| panic!("PRIVY_JWT_VERIFICATION_KEY must be a valid base64 string"))
             .to_vec();
+
+        // Backend signing key for capabilities
+        let backend_private_key = get_env_var("BACKEND_PRIVATE_KEY");
+        let backend_public_key = get_env_var("BACKEND_PUBLIC_KEY");
 
         Config {
             database_url,
@@ -53,9 +71,14 @@ impl Config {
             s3_access_key,
             s3_secret_key,
             s3_endpoint,
+            movement_network,
+            movement_rpc_url,
+            contract_address,
             privy_app_id,
             privy_app_secret,
             privy_jwt_verification_key,
+            backend_private_key,
+            backend_public_key,
         }
     }
 }
