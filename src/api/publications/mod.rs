@@ -1,7 +1,8 @@
 use crate::{
-    AppState,
+    AppState, CONFIG,
+    blockchain::{CapabilitySigner, SignedCapability},
     db::sql::{
-        CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations,
+        CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations, SqlClient,
         models::NewPublication,
     },
 };
@@ -12,7 +13,8 @@ use actix_web::{
     get, post, put, web,
 };
 use serde::Deserialize;
-use std::io::Read;
+use sha3::{Digest, Sha3_256};
+use std::io::{BufReader, Read};
 use uuid::Uuid;
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -51,7 +53,7 @@ pub struct CreatePublicationForm {
 #[post("/create")]
 async fn create_publication(
     req: actix_web::HttpRequest,
-    MultipartForm(mut form): MultipartForm<CreatePublicationForm>,
+    MultipartForm(form): MultipartForm<CreatePublicationForm>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     // Get user ID from authenticated user
@@ -89,15 +91,6 @@ async fn create_publication(
         }
     };
 
-    let mut file_content = Vec::new();
-    if let Err(err) = form.file.file.read_to_end(&mut file_content) {
-        tracing::error!("Failed to read uploaded file: {}", err);
-        return Err(ErrorBadRequest("Failed to read uploaded file"));
-    }
-
-    // TODO: Compute SHA3-256 hash (matches Move's hash::sha3_256)
-    let _paper_hash = aptos_crypto::hash::HashValue::sha3_256_of(&file_content).to_vec();
-
     let file_name = form
         .file
         .file_name
@@ -108,6 +101,13 @@ async fn create_publication(
     let publication_uuid = Uuid::new_v4();
     let s3_directory = format!("publications/{}", publication_uuid);
     let s3key = format!("{}/{}", s3_directory, file_name);
+
+    let capability =
+        generate_capability_for_publication(form.file.file.as_file(), form.price.0, &user_id)
+            .map_err(|err| {
+                tracing::error!("Failed to generate capability: {}", err);
+                err // Return the error to fail the request
+            })?;
 
     data.s3_client
         .upload_storage_files(vec![form.file], Some(s3_directory.into()))
@@ -148,53 +148,59 @@ async fn create_publication(
         );
     }
 
-    for cited_publication_id in citations {
-        if cited_publication_id == publication.id {
-            tracing::warn!(
-                "Publication {} attempted to cite itself, skipping",
-                publication.id
-            );
-            continue;
+    process_citations(&data.sql_client, publication.id, citations).await;
+
+    let response = serde_json::json!({
+        "publication": publication,
+        "capability": capability,
+    });
+
+    Ok(HttpResponse::Ok().json(response))
+}
+
+fn generate_capability_for_publication(
+    publication_file: &std::fs::File,
+    price: i64,
+    recipient: &str,
+) -> Result<SignedCapability, actix_web::Error> {
+    use aptos_sdk::types::account_address::AccountAddress;
+
+    let paper_hash = hash_file_sha3_256(publication_file).unwrap();
+
+    let capability_signer = CapabilitySigner::from_config(&CONFIG).map_err(|err| {
+        tracing::error!("Failed to create capability signer: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
+
+    // Parse recipient address
+    let recipient_addr = AccountAddress::from_hex(recipient).map_err(|err| {
+        tracing::error!("Invalid recipient address {}: {}", recipient, err);
+        ErrorBadRequest("Invalid recipient address")
+    })?;
+
+    capability_signer
+        .create_capability(&paper_hash, price as u64, &recipient_addr, 3600)
+        .map_err(|err| {
+            tracing::error!("Failed to create capability: {}", err);
+            ErrorInternalServerError("Failed to create capability")
+        })
+}
+
+fn hash_file_sha3_256(file: &std::fs::File) -> Result<[u8; 32], std::io::Error> {
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha3_256::default();
+
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
         }
-
-        // Check if citation already exists
-        let existing_citation = data
-            .sql_client
-            .get_citation_by_publications(publication.id, cited_publication_id)
-            .await;
-
-        match existing_citation {
-            Ok(Some(_)) => {
-                tracing::warn!(
-                    "Citation already exists between {} and {}, skipping",
-                    publication.id,
-                    cited_publication_id
-                );
-                continue;
-            }
-            Ok(None) => {
-                // Create the citation
-                let new_citation = crate::db::sql::models::NewCitation {
-                    citing_publication_id: publication.id,
-                    cited_publication_id,
-                };
-
-                if let Err(err) = data.sql_client.create_citation(&new_citation).await {
-                    tracing::error!(
-                        "Error creating citation from {} to {}: {}",
-                        publication.id,
-                        cited_publication_id,
-                        err
-                    );
-                }
-            }
-            Err(err) => {
-                tracing::error!("Error checking existing citation: {}", err);
-            }
-        }
+        digest::DynDigest::update(&mut hasher, &buffer[..n]);
     }
 
-    Ok(HttpResponse::Ok().json(publication))
+    let result = hasher.finalize();
+    Ok(result.into())
 }
 
 #[get("/{publication_id}")]
@@ -634,4 +640,50 @@ async fn get_publication_pdf_url(
         "pdf_url": pdf_url,
         "expires_in": "5 minutes" // Presigned URL expires in 5 minutes
     })))
+}
+
+/// Helper function to process citations for a publication
+async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citations: Vec<Uuid>) {
+    for cited_publication_id in citations {
+        if cited_publication_id == publication_id {
+            tracing::warn!(
+                "Publication {} attempted to cite itself, skipping",
+                publication_id
+            );
+            continue;
+        }
+
+        let existing_citation = sql_client
+            .get_citation_by_publications(publication_id, cited_publication_id)
+            .await;
+
+        match existing_citation {
+            Ok(Some(_)) => {
+                tracing::warn!(
+                    "Citation already exists between {} and {}, skipping",
+                    publication_id,
+                    cited_publication_id
+                );
+                continue;
+            }
+            Ok(None) => {
+                let new_citation = crate::db::sql::models::NewCitation {
+                    citing_publication_id: publication_id,
+                    cited_publication_id,
+                };
+
+                if let Err(err) = sql_client.create_citation(&new_citation).await {
+                    tracing::error!(
+                        "Error creating citation from {} to {}: {}",
+                        publication_id,
+                        cited_publication_id,
+                        err
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::error!("Error checking existing citation: {}", err);
+            }
+        }
+    }
 }

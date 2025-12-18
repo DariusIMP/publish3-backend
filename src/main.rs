@@ -20,7 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 pub mod api;
 pub mod auth;
-// pub mod blockchain;
+pub mod blockchain;
 pub mod common;
 pub mod config;
 pub mod db;

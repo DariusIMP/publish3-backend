@@ -396,7 +396,6 @@ impl PublicationOperations for SqlClient {
     }
 
     async fn get_citation_count(&self, publication_id: Uuid) -> Result<i64, sqlx::Error> {
-        // Use the existing count_citations_to_publication method from CitationOperations
         self.count_citations_to_publication(publication_id).await
     }
 }
