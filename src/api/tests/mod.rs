@@ -75,6 +75,7 @@ pub async fn create_test_author(sql_client: &SqlClient, user_privy_id: &str) -> 
         name: format!("Test Author {}", Uuid::new_v4()),
         email: Some(format!("author_{}@example.com", Uuid::new_v4())),
         affiliation: Some("Test University".to_string()),
+        wallet_address: format!("0x{:064x}", Uuid::new_v4().as_u128()),
     };
 
     let author = sql_client.create_author(&new_author).await.unwrap();
@@ -87,9 +88,11 @@ pub async fn create_test_publication(sql_client: &SqlClient, user_privy_id: Stri
     let new_publication = NewPublication {
         user_id: user_privy_id,
         title: format!("Test Publication {}", Uuid::new_v4()),
-        about: Some("Test publication description".to_string()),
-        tags: Some(vec!["test".to_string(), "research".to_string()]),
-        s3key: None,
+        about: "Test publication description".to_string(),
+        tags: vec!["test".to_string(), "research".to_string()],
+        s3key: "s3://test-bucket/test-key.pdf".to_string(),
+        price: 1000,
+        citation_royalty_bps: 100,
     };
 
     let publication = sql_client
