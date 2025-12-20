@@ -2,8 +2,8 @@ use crate::{
     AppState, CONFIG,
     blockchain::{CapabilitySigner, SignedCapability},
     db::sql::{
-        CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations, SqlClient,
-        models::NewPublication,
+        AuthorOperations, CitationOperations, PrivyId, PublicationAuthorOperations,
+        PublicationOperations, SqlClient, models::NewPublication,
     },
 };
 use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
@@ -42,12 +42,12 @@ mod tests;
 pub struct CreatePublicationForm {
     title: Text<String>,
     about: Text<String>,
-    tags: Text<String>,              // JSON array of tags (required)
-    authors: Text<String>,           // JSON array of author privy_ids (required)
-    citations: Text<String>, // JSON array of publication UUIDs to cite (required, can be empty array)
-    price: Text<i64>,        // Price as i64 (required)
-    citation_royalty_bps: Text<i64>, // Citation royalty as i64 (required)
-    file: TempFile,          // PDF file (required)
+    tags: Text<String>,
+    authors: Text<String>,
+    citations: Option<Text<String>>,
+    price: Text<i64>,
+    citation_royalty_bps: Text<i64>,
+    file: TempFile,
 }
 
 #[post("/create")]
@@ -81,14 +81,17 @@ async fn create_publication(
         }
     };
 
-    let citations = match serde_json::from_str::<Vec<Uuid>>(&form.citations.0) {
-        Ok(citations) => citations,
-        Err(err) => {
-            tracing::error!("Failed to parse citations JSON: {}", err);
-            return Err(ErrorBadRequest(
-                "Invalid citations format. Expected JSON array of publication UUIDs",
-            ));
-        }
+    let citations = match &form.citations {
+        Some(citations_text) => match serde_json::from_str::<Vec<Uuid>>(&citations_text.0) {
+            Ok(citations) => citations,
+            Err(err) => {
+                tracing::error!("Failed to parse citations JSON: {}", err);
+                return Err(ErrorBadRequest(
+                    "Invalid citations format. Expected JSON array of publication UUIDs",
+                ));
+            }
+        },
+        None => Vec::new(),
     };
 
     let file_name = form
@@ -102,12 +105,20 @@ async fn create_publication(
     let s3_directory = format!("publications/{}", publication_uuid);
     let s3key = format!("{}/{}", s3_directory, file_name);
 
-    let capability =
-        generate_capability_for_publication(form.file.file.as_file(), form.price.0, &user_id)
-            .map_err(|err| {
-                tracing::error!("Failed to generate capability: {}", err);
-                err // Return the error to fail the request
-            })?;
+    let author = data.sql_client.get_author(&user_id).await.map_err(|err| {
+        tracing::error!("Error creating publication: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
+
+    let capability = generate_capability_for_publication(
+        form.file.file.as_file(),
+        form.price.0,
+        &author.wallet_address,
+    )
+    .map_err(|err| {
+        tracing::error!("Failed to generate capability: {}", err);
+        err // Return the error to fail the request
+    })?;
 
     data.s3_client
         .upload_storage_files(vec![form.file], Some(s3_directory.into()))
@@ -173,7 +184,7 @@ fn generate_capability_for_publication(
     })?;
 
     // Parse recipient address
-    let recipient_addr = AccountAddress::from_hex(recipient).map_err(|err| {
+    let recipient_addr = AccountAddress::from_hex_literal(recipient).map_err(|err| {
         tracing::error!("Invalid recipient address {}: {}", recipient, err);
         ErrorBadRequest("Invalid recipient address")
     })?;
