@@ -161,9 +161,18 @@ async fn create_publication(
 
     process_citations(&data.sql_client, publication.id, citations).await;
 
+    // Fetch wallet addresses for all authors
+    let author_wallet_addresses = fetch_author_wallet_addresses(&data.sql_client, &authors)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to fetch author wallet addresses: {}", err);
+            ErrorInternalServerError("Failed to fetch author wallet addresses")
+        })?;
+
     let response = serde_json::json!({
         "publication": publication,
         "capability": capability,
+        "author_wallets": author_wallet_addresses,
     });
 
     Ok(HttpResponse::Ok().json(response))
@@ -358,13 +367,29 @@ async fn update_publication(
 
 #[delete("/{publication_id}")]
 async fn delete_publication(
+    req: actix_web::HttpRequest,
     publication_id: web::Path<Uuid>,
     data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    // Get user ID from authenticated user
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+    delete_publication_internal(&data, *publication_id, &user_id).await
+}
+
+/// Internal function to delete a publication (used for rollback)
+async fn delete_publication_internal(
+    data: &AppState,
+    publication_id: Uuid,
+    user_id: &str,
 ) -> Result<HttpResponse, actix_web::Error> {
     // First get the publication to check if it has an S3 file
     let publication = data
         .sql_client
-        .get_publication(*publication_id)
+        .get_publication(publication_id)
         .await
         .map_err(|err| {
             tracing::error!("Error retrieving publication: {}", err);
@@ -373,6 +398,20 @@ async fn delete_publication(
                 _ => ErrorInternalServerError("Internal server error"),
             }
         })?;
+    
+    // Check if the user is authorized to delete this publication
+    if publication.user_id != user_id {
+        return Err(actix_web::error::ErrorForbidden(
+            "You are not authorized to delete this publication",
+        ));
+    }
+
+    // Check if the publication is in PENDING_ONCHAIN status
+    if publication.status != "PENDING_ONCHAIN" {
+        return Err(ErrorBadRequest(
+            "Publication can only be deleted during rollback when status is PENDING_ONCHAIN",
+        ));
+    }
 
     if !publication.s3key.is_empty() {
         if let Some(file_name) = publication.s3key.split('/').last() {
@@ -389,7 +428,7 @@ async fn delete_publication(
 
     let result = data
         .sql_client
-        .delete_publication(*publication_id)
+        .delete_publication(publication_id)
         .await
         .map_err(|err| {
             tracing::error!("Error deleting publication: {}", err);
@@ -651,6 +690,28 @@ async fn get_publication_pdf_url(
         "pdf_url": pdf_url,
         "expires_in": "5 minutes" // Presigned URL expires in 5 minutes
     })))
+}
+
+/// Helper function to fetch wallet addresses for authors
+async fn fetch_author_wallet_addresses(
+    sql_client: &SqlClient,
+    author_ids: &[PrivyId],
+) -> Result<Vec<String>, actix_web::Error> {
+    let mut wallet_addresses = Vec::new();
+
+    for author_id in author_ids {
+        match sql_client.get_author(author_id).await {
+            Ok(author) => {
+                wallet_addresses.push(author.wallet_address);
+            }
+            Err(err) => {
+                tracing::error!("Failed to fetch author {}: {}", author_id, err);
+                return Err(ErrorInternalServerError("Failed to fetch author details"));
+            }
+        }
+    }
+
+    Ok(wallet_addresses)
 }
 
 /// Helper function to process citations for a publication

@@ -33,6 +33,8 @@ pub struct Publication {
     pub s3key: String,
     pub price: i64,
     pub citation_royalty_bps: i64,
+    pub status: String,
+    pub transaction_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

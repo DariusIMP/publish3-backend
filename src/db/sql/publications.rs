@@ -90,9 +90,9 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            INSERT INTO publications (user_id, title, about, tags, s3key, price, citation_royalty_bps)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            INSERT INTO publications (user_id, title, about, tags, s3key, price, citation_royalty_bps, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING_ONCHAIN')
+            RETURNING id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             "#,
         )
         .bind(&new_publication.user_id)
@@ -109,7 +109,7 @@ impl PublicationOperations for SqlClient {
     async fn get_publication(&self, publication_id: Uuid) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE id = $1
             "#,
@@ -130,7 +130,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -154,7 +154,7 @@ impl PublicationOperations for SqlClient {
         // First get publications
         let publications = sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -204,7 +204,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -231,7 +231,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE title ILIKE $1
             ORDER BY title ASC
@@ -257,7 +257,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE $1 = ANY(tags)
             ORDER BY created_at DESC
@@ -360,7 +360,7 @@ impl PublicationOperations for SqlClient {
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.created_at, p.updated_at
+            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.status, p.transaction_hash, p.created_at, p.updated_at
             FROM publications p
             INNER JOIN citations c ON p.id = c.citing_publication_id
             WHERE c.cited_publication_id = $1
