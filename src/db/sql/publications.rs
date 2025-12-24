@@ -187,7 +187,7 @@ impl PublicationOperations for SqlClient {
                     name: author_detail.author_name,
                     email: author_detail.author_email,
                     affiliation: author_detail.author_affiliation,
-                    wallet_address: author_detail.author_wallet_address,
+                    wallet_id: author_detail.author_wallet_id,
                     created_at: chrono::Utc::now(), // Placeholder - we don't have this info
                     updated_at: chrono::Utc::now(), // Placeholder - we don't have this info
                 })
@@ -335,7 +335,7 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Vec<super::models::Author>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Author>(
             r#"
-            SELECT a.privy_id, a.name, a.email, a.affiliation, a.wallet_address, a.created_at, a.updated_at
+            SELECT a.privy_id, a.name, a.email, a.affiliation, a.wallet_id, a.created_at, a.updated_at
             FROM authors a
             INNER JOIN publication_authors pa ON a.privy_id = pa.author_id
             WHERE pa.publication_id = $1
@@ -392,7 +392,7 @@ impl PublicationOperations for SqlClient {
                 a.name as author_name,
                 a.email as author_email,
                 a.affiliation as author_affiliation,
-                a.wallet_address as author_wallet_address
+                a.wallet_id as author_wallet_id
             FROM publication_authors pa
             INNER JOIN authors a ON pa.author_id = a.privy_id
             WHERE pa.publication_id = $1

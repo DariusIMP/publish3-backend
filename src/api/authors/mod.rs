@@ -1,16 +1,17 @@
 use actix_web::{
     HttpResponse, delete,
-    error::{ErrorBadRequest, ErrorConflict, ErrorInternalServerError, ErrorNotFound},
+    error::{ErrorConflict, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
 };
 use serde::Deserialize;
 
 use crate::{
     AppState,
-    db::sql::{AuthorOperations, PrivyId, models::NewAuthor},
+    db::sql::{
+        AuthorOperations, PrivyId, WalletOperations,
+        models::{NewAuthor, NewUserWallet, NewWallet},
+    },
 };
-
-use aptos_sdk::types::account_address::AccountAddress;
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/authors")
@@ -29,6 +30,7 @@ pub struct CreateAuthorRequest {
     name: String,
     email: Option<String>,
     affiliation: Option<String>,
+    wallet_id: String,
     wallet_address: String,
 }
 
@@ -37,21 +39,10 @@ async fn create_author(
     request: web::Json<CreateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if let Err(err) = AccountAddress::from_hex_literal(&request.wallet_address) {
-        return Err(ErrorBadRequest(err));
-    }
-
-    // Check if wallet address already exists
-    let wallet_address_exists = data
-        .sql_client
-        .author_wallet_address_exists(&request.wallet_address)
-        .await
-        .map_err(|_| ErrorInternalServerError("Internal server error"))?;
-
-    if wallet_address_exists {
-        return Err(ErrorConflict(
-            "Author with that wallet address already exists",
-        ));
+    // Check if author with this privy_id already exists
+    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
+    if author_by_privy_id.is_ok() {
+        return Err(ErrorConflict("Author with that privy_id already exists"));
     }
 
     if let Some(email) = &request.email {
@@ -66,17 +57,40 @@ async fn create_author(
         }
     }
 
-    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
-    if author_by_privy_id.is_ok() {
-        return Err(ErrorConflict("Author with that privy_id already exists"));
-    }
+    let new_wallet = NewWallet {
+        wallet_id: request.wallet_id.clone(),
+        wallet_address: request.wallet_address.clone(),
+    };
 
+    data.sql_client
+        .create_wallet(&new_wallet)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error creating wallet: {}", err);
+            ErrorInternalServerError("Failed to create wallet")
+        })?;
+
+    let new_user_wallet = NewUserWallet {
+        user_id: request.privy_id.clone(),
+        wallet_id: request.wallet_id.clone(),
+        is_primary: true,
+    };
+
+    data.sql_client
+        .create_user_wallet(&new_user_wallet)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error creating user_wallet association: {}", err);
+            ErrorInternalServerError("Failed to associate wallet with user")
+        })?;
+
+    // Create author
     let new_author = NewAuthor {
         privy_id: request.privy_id.clone(),
         name: request.name.clone(),
         email: request.email.clone(),
         affiliation: request.affiliation.clone(),
-        wallet_address: request.wallet_address.clone(),
+        wallet_id: request.wallet_id.clone(),
     };
 
     let author = data
@@ -112,7 +126,7 @@ pub struct UpdateAuthorRequest {
     name: Option<String>,
     email: Option<String>,
     affiliation: Option<String>,
-    wallet_address: Option<String>,
+    wallet_id: Option<String>,
 }
 
 #[put("/{privy_id}")]
@@ -121,35 +135,28 @@ async fn update_author(
     request: web::Json<UpdateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if let Some(wallet_address) = &request.wallet_address {
-        if let Err(err) = AccountAddress::from_hex_literal(wallet_address) {
-            return Err(ErrorBadRequest(err));
-        }
-
-        let wallet_address_exists = data
+    if let Some(wallet_id) = &request.wallet_id {
+        let wallet_id_exists = data
             .sql_client
-            .author_wallet_address_exists(wallet_address)
+            .author_wallet_id_exists(wallet_id)
             .await
             .map_err(|_| ErrorInternalServerError("Internal server error"))?;
 
-        if wallet_address_exists {
-            let existing_author = data
-                .sql_client
-                .get_author_by_wallet_address(wallet_address)
-                .await;
+        if wallet_id_exists {
+            let existing_author = data.sql_client.get_author_by_wallet_id(wallet_id).await;
             match existing_author {
                 Ok(existing) => {
                     if existing.privy_id != *privy_id {
                         return Err(ErrorConflict(
-                            "Another author with that wallet address already exists",
+                            "Another author with that wallet id already exists",
                         ));
                     }
                 }
                 Err(sqlx::Error::RowNotFound) => {
-                    // Wallet address doesn't exist, that's fine
+                    // Wallet id doesn't exist, that's fine
                 }
                 Err(err) => {
-                    tracing::error!("Error checking author wallet address: {}", err);
+                    tracing::error!("Error checking author wallet id: {}", err);
                     return Err(ErrorInternalServerError("Internal server error"));
                 }
             }
@@ -193,7 +200,7 @@ async fn update_author(
             request.name.as_deref(),
             request.email.as_deref(),
             request.affiliation.as_deref(),
-            request.wallet_address.as_deref(),
+            request.wallet_id.as_deref(),
         )
         .await
         .map_err(|err| {

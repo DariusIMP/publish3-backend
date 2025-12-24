@@ -5,8 +5,8 @@ use crate::{
     db::{
         s3::S3Key,
         sql::{
-            AuthorOperations, CitationOperations, PrivyId, PublicationAuthorOperations,
-            PublicationOperations, SqlClient, models::NewPublication,
+            CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations,
+            SqlClient, WalletOperations, models::NewPublication,
         },
     },
     zerror,
@@ -157,30 +157,34 @@ async fn prepare_blockchain_transaction(
     authors: &Vec<String>,
     form: &CreatePublicationForm,
 ) -> ZResult<PublicationData> {
+    // Get user's primary wallet
     let user_wallet = data
         .sql_client
-        .get_wallet_address(user_id)
+        .get_primary_wallet(user_id)
         .await
-        .map(|wallet| AccountAddress::from_hex_literal(&wallet))
-        .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?
-        .map_err(|err| zerror!("Error parsing wallet: {}", err))?;
+        .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?;
+    
+    let user_wallet_account = AccountAddress::from_hex_literal(&user_wallet.wallet_address)
+        .map_err(|err| zerror!("Error parsing user wallet address: {}", err))?;
 
-    let author_wallets = data
+    // Get authors' primary wallets
+    let authors_wallets = data
         .sql_client
-        .get_wallet_addresses_by_privy_ids(authors)
+        .get_primary_wallets(authors)
         .await
-        .map_err(|err| zerror!("Error fetching authors wallet addresses from DB: {}", err))?
+        .map_err(|err| zerror!("Error fetching authors wallets from DB: {}", err))?;
+    
+    let authors_wallets_accounts = authors_wallets
         .iter()
-        .map(|wallet| AccountAddress::from_hex_literal(wallet))
+        .map(|wallet| AccountAddress::from_hex_literal(&wallet.wallet_address))
         .collect::<Result<Vec<AccountAddress>, AccountAddressParseError>>()
-        .map_err(|err| zerror!("Error parsing author wallets: {}", err))?;
+        .map_err(|err| zerror!("Error parsing author wallet addresses: {}", err))?;
 
     // Get wallet info from Privy
-    let user_wallet_id = user_id; // TODO: store privy WALLET ID along with wallet in DB, or retrieve them somehow
     let user_wallet_pk = data
         .privy_client
         .wallets()
-        .get(user_wallet_id)
+        .get(&user_wallet.wallet_id)
         .await
         .map(|wallet| wallet.public_key.clone())
         .map_err(|err| zerror!("Failed to get wallet from Privy: {}", err))?
@@ -192,10 +196,10 @@ async fn prepare_blockchain_transaction(
 
     let publication_data = PublicationData {
         paper_hash,
-        user_wallet,
-        user_wallet_id: user_wallet_id.clone(),
+        user_wallet: user_wallet_account,
+        user_wallet_id: (&user_wallet.wallet_id).clone(),
         user_wallet_pk,
-        author_wallets,
+        author_wallets: authors_wallets_accounts,
         price: form.price.0 as u64,
     };
 

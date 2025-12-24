@@ -18,7 +18,7 @@ pub struct Author {
     pub name: String,
     pub email: Option<String>,
     pub affiliation: Option<String>,
-    pub wallet_address: String,
+    pub wallet_id: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -54,7 +54,23 @@ pub struct PublicationAuthorWithDetails {
     pub author_name: String,
     pub author_email: Option<String>,
     pub author_affiliation: Option<String>,
-    pub author_wallet_address: String,
+    pub author_wallet_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Wallet {
+    pub wallet_id: String,
+    pub wallet_address: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserWallet {
+    pub user_id: String,
+    pub wallet_id: String,
+    pub is_primary: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -77,7 +93,7 @@ pub struct NewAuthor {
     pub name: String,
     pub email: Option<String>,
     pub affiliation: Option<String>,
-    pub wallet_address: String,
+    pub wallet_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +112,19 @@ pub struct NewPublicationAuthor {
     pub publication_id: Uuid,
     pub author_id: String,
     pub author_order: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWallet {
+    pub wallet_id: String,
+    pub wallet_address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewUserWallet {
+    pub user_id: String,
+    pub wallet_id: String,
+    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

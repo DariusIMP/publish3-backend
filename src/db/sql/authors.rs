@@ -33,24 +33,24 @@ pub trait AuthorOperations {
         name: Option<&str>,
         email: Option<&str>,
         affiliation: Option<&str>,
-        wallet_address: Option<&str>,
+        wallet_id: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error>;
 
     async fn delete_author(&self, privy_id: &PrivyId) -> Result<PgQueryResult, sqlx::Error>;
 
     async fn author_email_exists(&self, email: &str) -> Result<bool, sqlx::Error>;
 
-    async fn author_wallet_address_exists(&self, wallet_address: &str)
+    async fn author_wallet_id_exists(&self, wallet_id: &str)
     -> Result<bool, sqlx::Error>;
 
-    async fn get_author_by_wallet_address(
+    async fn get_author_by_wallet_id(
         &self,
-        wallet_address: &str,
+        wallet_id: &str,
     ) -> Result<Author, sqlx::Error>;
 
-    async fn get_wallet_address(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error>;
+    async fn get_wallet_id(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error>;
 
-    async fn get_wallet_addresses_by_privy_ids(
+    async fn get_wallet_ids_by_privy_ids(
         &self,
         privy_ids: &[PrivyId],
     ) -> Result<Vec<String>, sqlx::Error>;
@@ -66,16 +66,16 @@ impl AuthorOperations for SqlClient {
     ) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            INSERT INTO authors (privy_id, name, email, affiliation, wallet_address)
+            INSERT INTO authors (privy_id, name, email, affiliation, wallet_id)
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            RETURNING privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             "#,
         )
         .bind(&new_author.privy_id)
         .bind(&new_author.name)
         .bind(&new_author.email)
         .bind(&new_author.affiliation)
-        .bind(&new_author.wallet_address)
+        .bind(&new_author.wallet_id)
         .fetch_one(&self.db)
         .await
     }
@@ -83,7 +83,7 @@ impl AuthorOperations for SqlClient {
     async fn get_author(&self, privy_id: &PrivyId) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            SELECT privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             FROM authors 
             WHERE privy_id = $1
             "#,
@@ -96,7 +96,7 @@ impl AuthorOperations for SqlClient {
     async fn get_author_by_email(&self, email: &str) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            SELECT privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             FROM authors 
             WHERE email = $1
             "#,
@@ -117,7 +117,7 @@ impl AuthorOperations for SqlClient {
 
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            SELECT privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             FROM authors 
             ORDER BY name ASC
             LIMIT $1 OFFSET $2
@@ -142,7 +142,7 @@ impl AuthorOperations for SqlClient {
 
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            SELECT privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             FROM authors 
             WHERE name ILIKE $1
             ORDER BY name ASC
@@ -162,7 +162,7 @@ impl AuthorOperations for SqlClient {
         name: Option<&str>,
         email: Option<&str>,
         affiliation: Option<&str>,
-        wallet_address: Option<&str>,
+        wallet_id: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error> {
         sqlx::query(
             r#"
@@ -170,7 +170,7 @@ impl AuthorOperations for SqlClient {
             name = COALESCE($1, name),
             email = COALESCE($2, email),
             affiliation = COALESCE($3, affiliation),
-            wallet_address = COALESCE($4, wallet_address),
+            wallet_id = COALESCE($4, wallet_id),
             updated_at = NOW()
             WHERE privy_id = $5
             "#,
@@ -178,7 +178,7 @@ impl AuthorOperations for SqlClient {
         .bind(name)
         .bind(email)
         .bind(affiliation)
-        .bind(wallet_address)
+        .bind(wallet_id)
         .bind(privy_id)
         .execute(&self.db)
         .await
@@ -198,36 +198,36 @@ impl AuthorOperations for SqlClient {
             .await
     }
 
-    async fn author_wallet_address_exists(
+    async fn author_wallet_id_exists(
         &self,
-        wallet_address: &str,
+        wallet_id: &str,
     ) -> Result<bool, sqlx::Error> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM authors WHERE wallet_address = $1)")
-            .bind(wallet_address)
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM authors WHERE wallet_id = $1)")
+            .bind(wallet_id)
             .fetch_one(&self.db)
             .await
     }
 
-    async fn get_author_by_wallet_address(
+    async fn get_author_by_wallet_id(
         &self,
-        wallet_address: &str,
+        wallet_id: &str,
     ) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
+            SELECT privy_id, name, email, affiliation, wallet_id, created_at, updated_at
             FROM authors 
-            WHERE wallet_address = $1
+            WHERE wallet_id = $1
             "#,
         )
-        .bind(wallet_address)
+        .bind(wallet_id)
         .fetch_one(&self.db)
         .await
     }
 
-    async fn get_wallet_address(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error> {
+    async fn get_wallet_id(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error> {
         sqlx::query_scalar(
             r#"
-            SELECT wallet_address FROM authors WHERE privy_id = $1
+            SELECT wallet_id FROM authors WHERE privy_id = $1
             "#,
         )
         .bind(privy_id)
@@ -235,7 +235,7 @@ impl AuthorOperations for SqlClient {
         .await
     }
 
-    async fn get_wallet_addresses_by_privy_ids(
+    async fn get_wallet_ids_by_privy_ids(
         &self,
         privy_ids: &[PrivyId],
     ) -> Result<Vec<String>, sqlx::Error> {
@@ -249,7 +249,7 @@ impl AuthorOperations for SqlClient {
 
         let query_str = format!(
             r#"
-            SELECT wallet_address
+            SELECT wallet_id
             FROM authors 
             WHERE privy_id IN ({})
             ORDER BY array_position(ARRAY[{}], privy_id)
