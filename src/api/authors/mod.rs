@@ -90,7 +90,6 @@ async fn create_author(
         name: request.name.clone(),
         email: request.email.clone(),
         affiliation: request.affiliation.clone(),
-        wallet_id: request.wallet_id.clone(),
     };
 
     let author = data
@@ -126,7 +125,6 @@ pub struct UpdateAuthorRequest {
     name: Option<String>,
     email: Option<String>,
     affiliation: Option<String>,
-    wallet_id: Option<String>,
 }
 
 #[put("/{privy_id}")]
@@ -135,33 +133,6 @@ async fn update_author(
     request: web::Json<UpdateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if let Some(wallet_id) = &request.wallet_id {
-        let wallet_id_exists = data
-            .sql_client
-            .author_wallet_id_exists(wallet_id)
-            .await
-            .map_err(|_| ErrorInternalServerError("Internal server error"))?;
-
-        if wallet_id_exists {
-            let existing_author = data.sql_client.get_author_by_wallet_id(wallet_id).await;
-            match existing_author {
-                Ok(existing) => {
-                    if existing.privy_id != *privy_id {
-                        return Err(ErrorConflict(
-                            "Another author with that wallet id already exists",
-                        ));
-                    }
-                }
-                Err(sqlx::Error::RowNotFound) => {
-                    // Wallet id doesn't exist, that's fine
-                }
-                Err(err) => {
-                    tracing::error!("Error checking author wallet id: {}", err);
-                    return Err(ErrorInternalServerError("Internal server error"));
-                }
-            }
-        }
-    }
 
     // Check if new email already exists (if email is being updated)
     if let Some(email) = &request.email {
@@ -200,7 +171,6 @@ async fn update_author(
             request.name.as_deref(),
             request.email.as_deref(),
             request.affiliation.as_deref(),
-            request.wallet_id.as_deref(),
         )
         .await
         .map_err(|err| {

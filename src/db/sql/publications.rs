@@ -158,7 +158,6 @@ impl PublicationOperations for SqlClient {
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
 
-        // First get publications
         let publications = sqlx::query_as::<_, Publication>(
             r#"
             SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
@@ -172,14 +171,12 @@ impl PublicationOperations for SqlClient {
         .fetch_all(&self.db)
         .await?;
 
-        // Then get authors for each publication using the new method
         let mut result = Vec::new();
         for publication in publications {
             let authors_with_details = self
                 .get_publication_authors_with_details(publication.id)
                 .await?;
 
-            // Convert PublicationAuthorWithDetails to Author format for frontend compatibility
             let authors: Vec<super::models::Author> = authors_with_details
                 .into_iter()
                 .map(|author_detail| super::models::Author {
@@ -187,9 +184,8 @@ impl PublicationOperations for SqlClient {
                     name: author_detail.author_name,
                     email: author_detail.author_email,
                     affiliation: author_detail.author_affiliation,
-                    wallet_id: author_detail.author_wallet_id,
-                    created_at: chrono::Utc::now(), // Placeholder - we don't have this info
-                    updated_at: chrono::Utc::now(), // Placeholder - we don't have this info
+                    created_at: chrono::Utc::now(), // TODO: refactor this
+                    updated_at: chrono::Utc::now(),
                 })
                 .collect();
 
@@ -335,7 +331,7 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Vec<super::models::Author>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Author>(
             r#"
-            SELECT a.privy_id, a.name, a.email, a.affiliation, a.wallet_id, a.created_at, a.updated_at
+            SELECT a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
             FROM authors a
             INNER JOIN publication_authors pa ON a.privy_id = pa.author_id
             WHERE pa.publication_id = $1
@@ -391,8 +387,7 @@ impl PublicationOperations for SqlClient {
                 pa.author_order,
                 a.name as author_name,
                 a.email as author_email,
-                a.affiliation as author_affiliation,
-                a.wallet_id as author_wallet_id
+                a.affiliation as author_affiliation
             FROM publication_authors pa
             INNER JOIN authors a ON pa.author_id = a.privy_id
             WHERE pa.publication_id = $1

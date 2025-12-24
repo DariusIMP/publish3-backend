@@ -80,7 +80,6 @@ pub async fn create_test_author(sql_client: &SqlClient, user_privy_id: &str) -> 
         name: format!("Test Author {}", Uuid::new_v4()),
         email: Some(format!("author_{}@example.com", Uuid::new_v4())),
         affiliation: Some("Test University".to_string()),
-        wallet_address: format!("0x{:064x}", Uuid::new_v4().as_u128()),
     };
 
     let author = sql_client.create_author(&new_author).await.unwrap();

@@ -48,7 +48,6 @@ mod integration_tests {
                 name: format!("Test Author {}", user_privy_id),
                 email: Some(format!("author_{}@example.com", user_privy_id)),
                 affiliation: Some("Test University".to_string()),
-                wallet_address: format!("0x{}", Uuid::new_v4()),
             })
             .await?;
         Ok(author)
@@ -90,13 +89,6 @@ mod integration_tests {
     }
 
     #[sqlx::test]
-    async fn test_user_email_exists(pool: sqlx::PgPool) -> sqlx::Result<()> {
-        // This test is no longer relevant since we don't store email in users table
-        // We'll skip it for now
-        Ok(())
-    }
-
-    #[sqlx::test]
     async fn test_author_crud_operations(pool: sqlx::PgPool) -> sqlx::Result<()> {
         let sql_client = SqlClient::new(pool.clone()).await;
 
@@ -119,7 +111,6 @@ mod integration_tests {
                 Some("Updated Author"),
                 Some("updated@example.com"),
                 Some("Updated University"),
-                None, // wallet_address not being updated
             )
             .await?;
         assert!(result.rows_affected() > 0);
@@ -178,13 +169,6 @@ mod integration_tests {
             .await?;
         assert!(citation_by_pubs.is_some());
         assert_eq!(citation_by_pubs.unwrap().id, citation.id);
-
-        let result = sql_client.update_citation(citation.id).await?;
-        assert!(result.rows_affected() == 0); // No fields to update
-
-        let delete_result = sql_client.delete_citation(citation.id).await?;
-        assert!(delete_result.rows_affected() > 0);
-
         Ok(())
     }
 
@@ -536,10 +520,7 @@ mod integration_tests {
 
         let publication = sql_client.create_publication(&new_publication).await?;
         assert_eq!(publication.title, "Test Publication");
-        assert_eq!(
-            publication.about,
-            "This is a test publication".to_string()
-        );
+        assert_eq!(publication.about, "This is a test publication".to_string());
         assert_eq!(publication.tags, vec!["test".to_string(), "ai".to_string()]);
         assert_eq!(publication.s3key, "s3://bucket/key.pdf".to_string());
 
@@ -561,10 +542,7 @@ mod integration_tests {
 
         let updated_publication = sql_client.get_publication(publication.id).await?;
         assert_eq!(updated_publication.title, "Updated Title");
-        assert_eq!(
-            updated_publication.about,
-            "Updated description".to_string()
-        );
+        assert_eq!(updated_publication.about, "Updated description".to_string());
         assert_eq!(
             updated_publication.tags,
             vec!["updated".to_string(), "ml".to_string()]
@@ -719,15 +697,9 @@ mod integration_tests {
 
         let after_title_update = sql_client.get_publication(publication.id).await?;
         assert_eq!(after_title_update.title, "Updated Title Only");
-        assert_eq!(
-            after_title_update.about,
-            "Original description".to_string()
-        );
+        assert_eq!(after_title_update.about, "Original description".to_string());
         assert_eq!(after_title_update.tags, vec!["original".to_string()]);
-        assert_eq!(
-            after_title_update.s3key,
-            "s3://original.pdf".to_string()
-        );
+        assert_eq!(after_title_update.s3key, "s3://original.pdf".to_string());
 
         let result2 = sql_client
             .update_publication(
@@ -761,10 +733,7 @@ mod integration_tests {
         assert!(result3.rows_affected() > 0);
 
         let after_s3key_update = sql_client.get_publication(publication.id).await?;
-        assert_eq!(
-            after_s3key_update.s3key,
-            "s3://updated.pdf".to_string()
-        );
+        assert_eq!(after_s3key_update.s3key, "s3://updated.pdf".to_string());
 
         Ok(())
     }

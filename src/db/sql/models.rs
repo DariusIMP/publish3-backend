@@ -18,7 +18,6 @@ pub struct Author {
     pub name: String,
     pub email: Option<String>,
     pub affiliation: Option<String>,
-    pub wallet_id: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -54,7 +53,6 @@ pub struct PublicationAuthorWithDetails {
     pub author_name: String,
     pub author_email: Option<String>,
     pub author_affiliation: Option<String>,
-    pub author_wallet_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -93,7 +91,6 @@ pub struct NewAuthor {
     pub name: String,
     pub email: Option<String>,
     pub affiliation: Option<String>,
-    pub wallet_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
