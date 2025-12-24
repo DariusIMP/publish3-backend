@@ -25,6 +25,18 @@ pub enum BlockchainError {
 
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    #[error("Cryptographic error: {0}")]
+    CryptoError(String),
+
+    #[error("Time error: {0}")]
+    TimeError(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
 
 impl From<aptos_sdk::rest_client::error::RestError> for BlockchainError {

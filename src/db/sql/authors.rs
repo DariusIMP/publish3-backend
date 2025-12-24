@@ -40,9 +40,20 @@ pub trait AuthorOperations {
 
     async fn author_email_exists(&self, email: &str) -> Result<bool, sqlx::Error>;
 
-    async fn author_wallet_address_exists(&self, wallet_address: &str) -> Result<bool, sqlx::Error>;
+    async fn author_wallet_address_exists(&self, wallet_address: &str)
+    -> Result<bool, sqlx::Error>;
 
-    async fn get_author_by_wallet_address(&self, wallet_address: &str) -> Result<Author, sqlx::Error>;
+    async fn get_author_by_wallet_address(
+        &self,
+        wallet_address: &str,
+    ) -> Result<Author, sqlx::Error>;
+
+    async fn get_wallet_address(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error>;
+
+    async fn get_wallet_addresses_by_privy_ids(
+        &self,
+        privy_ids: &[PrivyId],
+    ) -> Result<Vec<String>, sqlx::Error>;
 
     async fn count_authors(&self) -> Result<i64, sqlx::Error>;
 }
@@ -187,14 +198,20 @@ impl AuthorOperations for SqlClient {
             .await
     }
 
-    async fn author_wallet_address_exists(&self, wallet_address: &str) -> Result<bool, sqlx::Error> {
+    async fn author_wallet_address_exists(
+        &self,
+        wallet_address: &str,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM authors WHERE wallet_address = $1)")
             .bind(wallet_address)
             .fetch_one(&self.db)
             .await
     }
 
-    async fn get_author_by_wallet_address(&self, wallet_address: &str) -> Result<Author, sqlx::Error> {
+    async fn get_author_by_wallet_address(
+        &self,
+        wallet_address: &str,
+    ) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
             SELECT privy_id, name, email, affiliation, wallet_address, created_at, updated_at
@@ -205,6 +222,47 @@ impl AuthorOperations for SqlClient {
         .bind(wallet_address)
         .fetch_one(&self.db)
         .await
+    }
+
+    async fn get_wallet_address(&self, privy_id: &PrivyId) -> Result<String, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT wallet_address FROM authors WHERE privy_id = $1
+            "#,
+        )
+        .bind(privy_id)
+        .fetch_one(&self.db)
+        .await
+    }
+
+    async fn get_wallet_addresses_by_privy_ids(
+        &self,
+        privy_ids: &[PrivyId],
+    ) -> Result<Vec<String>, sqlx::Error> {
+        if privy_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Create a list of placeholders for the IN clause
+        let placeholders: Vec<String> = (1..=privy_ids.len()).map(|i| format!("${}", i)).collect();
+        let placeholders_str = placeholders.join(", ");
+
+        let query_str = format!(
+            r#"
+            SELECT wallet_address
+            FROM authors 
+            WHERE privy_id IN ({})
+            ORDER BY array_position(ARRAY[{}], privy_id)
+            "#,
+            placeholders_str, placeholders_str
+        );
+
+        let mut query = sqlx::query_scalar(&query_str);
+        for privy_id in privy_ids {
+            query = query.bind(privy_id);
+        }
+
+        query.fetch_all(&self.db).await
     }
 
     async fn count_authors(&self) -> Result<i64, sqlx::Error> {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use crate::{
     config::Config,
@@ -18,6 +18,9 @@ use sqlx::postgres::PgPoolOptions;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
+use aptos_sdk::rest_client::Client as AptosClient;
+use url::Url;
+
 pub mod api;
 pub mod auth;
 pub mod blockchain;
@@ -27,9 +30,9 @@ pub mod db;
 
 pub struct AppState {
     sql_client: Arc<SqlClient>,
-    redis_client: Client,
     s3_client: Arc<S3Client>,
-    // movement_client: Arc<blockchain::MovementClient>,
+    aptos_client: Arc<AptosClient>,
+    privy_client: Arc<PrivyClient>,
 }
 
 lazy_static! {
@@ -48,7 +51,10 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
-    let client = PrivyClient::new_from_env().unwrap();
+    let privy_client = Arc::new(PrivyClient::new_from_env().unwrap());
+    let aptos_client = Arc::new(AptosClient::new(
+        Url::from_str(&CONFIG.movement_rpc_url).unwrap(),
+    ));
 
     let pool = match PgPoolOptions::new()
         .max_connections(10)
@@ -67,7 +73,8 @@ async fn main() -> std::io::Result<()> {
 
     let sql_client = Arc::new(SqlClient::new(pool).await);
 
-    let redis_client = match Client::open(CONFIG.redis_url.to_owned()) {
+    // Todo, fix or remove
+    let _ = match Client::open(CONFIG.redis_url.to_owned()) {
         Ok(client) => {
             println!("✅Connection to the redis is successful!");
             client
@@ -94,17 +101,6 @@ async fn main() -> std::io::Result<()> {
         .await
         .unwrap();
 
-    // let movement_client = match blockchain::MovementClient::new(Arc::new(CONFIG.clone())) {
-    //     Ok(client) => {
-    //         println!("✅ Movement blockchain client initialized!");
-    //         Arc::new(client)
-    //     }
-    //     Err(err) => {
-    //         println!("🔥 Failed to initialize Movement client: {}", err);
-    //         std::process::exit(1);
-    //     }
-    // };
-
     let address = format!("{}:{}", CONFIG.server_address, CONFIG.server_port);
 
     tracing::info!("starting HTTP server at http://{address}");
@@ -112,9 +108,9 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(AppState {
                 sql_client: sql_client.clone(),
-                redis_client: redis_client.clone(),
                 s3_client: s3_client.clone(),
-                // movement_client: movement_client.clone(),
+                aptos_client: aptos_client.clone(),
+                privy_client: privy_client.clone(),
             }))
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())

@@ -80,6 +80,13 @@ pub trait PublicationOperations {
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error>;
 
     async fn get_citation_count(&self, publication_id: Uuid) -> Result<i64, sqlx::Error>;
+
+    async fn update_publication_transaction_status(
+        &self,
+        publication_id: Uuid,
+        status: &str,
+        transaction_hash: Option<&str>,
+    ) -> Result<PgQueryResult, sqlx::Error>;
 }
 
 #[async_trait]
@@ -399,5 +406,27 @@ impl PublicationOperations for SqlClient {
 
     async fn get_citation_count(&self, publication_id: Uuid) -> Result<i64, sqlx::Error> {
         self.count_citations_to_publication(publication_id).await
+    }
+
+    async fn update_publication_transaction_status(
+        &self,
+        publication_id: Uuid,
+        status: &str,
+        transaction_hash: Option<&str>,
+    ) -> Result<PgQueryResult, sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE publications SET
+            status = $1,
+            transaction_hash = COALESCE($2, transaction_hash),
+            updated_at = NOW()
+            WHERE id = $3
+            "#,
+        )
+        .bind(status)
+        .bind(transaction_hash)
+        .bind(publication_id)
+        .execute(&self.db)
+        .await
     }
 }

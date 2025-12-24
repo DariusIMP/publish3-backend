@@ -1,3 +1,5 @@
+use base64::{Engine, engine::general_purpose};
+
 fn get_env_var(var_name: &str) -> String {
     std::env::var(var_name).unwrap_or_else(|_| panic!("{} must be set", var_name))
 }
@@ -53,7 +55,8 @@ impl Config {
         // Privy configuration
         let privy_app_id = get_env_var("PRIVY_APP_ID");
         let privy_app_secret = get_env_var("PRIVY_APP_SECRET");
-        let privy_jwt_verification_key = base64::decode(get_env_var("PRIVY_JWT_VERIFICATION_KEY"))
+        let privy_jwt_verification_key = general_purpose::STANDARD
+            .decode(get_env_var("PRIVY_JWT_VERIFICATION_KEY"))
             .unwrap_or_else(|_| panic!("PRIVY_JWT_VERIFICATION_KEY must be a valid base64 string"))
             .to_vec();
 

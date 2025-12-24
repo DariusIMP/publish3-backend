@@ -1,16 +1,25 @@
 use crate::{
-    AppState, CONFIG,
-    blockchain::{CapabilitySigner, SignedCapability},
-    db::sql::{
-        AuthorOperations, CitationOperations, PrivyId, PublicationAuthorOperations,
-        PublicationOperations, SqlClient, models::NewPublication,
+    AppState,
+    blockchain::{PublicationData, submit_publication_to_blockchain},
+    common::zresult::ZResult,
+    db::{
+        s3::S3Key,
+        sql::{
+            AuthorOperations, CitationOperations, PrivyId, PublicationAuthorOperations,
+            PublicationOperations, SqlClient, models::NewPublication,
+        },
     },
+    zerror,
 };
 use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
 use actix_web::{
     HttpResponse, delete,
     error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
+};
+use aptos_rest_client::{Response, Transaction};
+use aptos_sdk::{
+    move_types::account_address::AccountAddressParseError, types::account_address::AccountAddress,
 };
 use serde::Deserialize;
 use sha3::{Digest, Sha3_256};
@@ -30,7 +39,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_publication_authors_handler)
         .service(get_publication_citations)
         .service(get_cited_by)
-        .service(get_publication_pdf_url);
+        .service(get_publication_pdf_url)
+        .service(update_publication_transaction_status);
     conf.service(scope);
 }
 
@@ -60,154 +70,140 @@ async fn create_publication(
     let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
-
     let user_id = claims.sub;
-    let tags = match serde_json::from_str::<Vec<String>>(&form.tags.0) {
-        Ok(tags) => tags,
-        Err(err) => {
-            tracing::error!("Failed to parse tags JSON: {}", err);
-            return Err(ErrorBadRequest("Invalid tags format. Expected JSON array"));
-        }
-    };
 
-    // Parse authors from JSON array string (now mandatory)
-    let authors = match serde_json::from_str::<Vec<PrivyId>>(&form.authors.0) {
-        Ok(authors) => authors,
-        Err(err) => {
-            tracing::error!("Failed to parse authors JSON: {}", err);
-            return Err(ErrorBadRequest(
-                "Invalid authors format. Expected JSON array of author IDs",
-            ));
-        }
-    };
+    let response = handle_publication(&user_id, &form, &data)
+        .await
+        .map_err(|err| ErrorInternalServerError(err))?;
 
-    let citations = match &form.citations {
-        Some(citations_text) => match serde_json::from_str::<Vec<Uuid>>(&citations_text.0) {
-            Ok(citations) => citations,
-            Err(err) => {
-                tracing::error!("Failed to parse citations JSON: {}", err);
-                return Err(ErrorBadRequest(
-                    "Invalid citations format. Expected JSON array of publication UUIDs",
+    Ok(HttpResponse::Ok().json(response.inner()))
+}
+
+async fn handle_publication(
+    user_id: &String,
+    form: &CreatePublicationForm,
+    data: &AppState,
+) -> ZResult<Response<Transaction>> {
+    let authors =
+        parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
+
+    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
+        .await
+        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
+
+    match run_publication_on_blockchain(data, user_id, &authors, form).await {
+        Ok(transaction_response) => {
+            if transaction_response.inner().success() {
+                let transaction_info = transaction_response
+                    .inner()
+                    .transaction_info()
+                    .map_err(|err| zerror!("Failed to obtain transaction info: {}", err))?;
+                let transaction_hash = transaction_info.hash.clone();
+                let result = data
+                    .sql_client
+                    .update_publication_transaction_status(
+                        publication.id,
+                        "PUBLISHED",
+                        Some(&transaction_hash.0.to_string()),
+                    )
+                    .await;
+
+                if let Err(err) = result {
+                    tracing::error!("Failed to update publication status on DB: {}", err);
+                }
+                return Ok(transaction_response);
+            } else {
+                let _ = delete_publication_internal(data, publication.id, user_id).await;
+                return Err(zerror!(
+                    "The publication transaction failed: {:?}",
+                    transaction_response.inner()
                 ));
             }
-        },
-        None => Vec::new(),
+        }
+        Err(err) => {
+            let _ = delete_publication_internal(data, publication.id, user_id).await;
+            return Err(zerror!("The publication transaction failed: {}", err));
+        }
     };
-
-    let file_name = form
-        .file
-        .file_name
-        .as_ref()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| "unnamed.pdf".to_string());
-
-    let publication_uuid = Uuid::new_v4();
-    let s3_directory = format!("publications/{}", publication_uuid);
-    let s3key = format!("{}/{}", s3_directory, file_name);
-
-    let author = data.sql_client.get_author(&user_id).await.map_err(|err| {
-        tracing::error!("Error creating publication: {}", err);
-        ErrorInternalServerError("Internal server error")
-    })?;
-
-    let capability = generate_capability_for_publication(
-        form.file.file.as_file(),
-        form.price.0,
-        &author.wallet_address,
-    )
-    .map_err(|err| {
-        tracing::error!("Failed to generate capability: {}", err);
-        err // Return the error to fail the request
-    })?;
-
-    data.s3_client
-        .upload_storage_files(vec![form.file], Some(s3_directory.into()))
-        .await
-        .map_err(|err| {
-            tracing::error!("Error uploading file to S3: {}", err);
-            ErrorInternalServerError("Failed to upload file")
-        })?;
-
-    let new_publication = NewPublication {
-        user_id: user_id.clone(),
-        title: form.title.0,
-        about: form.about.0,
-        tags,
-        s3key,
-        price: form.price.0,
-        citation_royalty_bps: form.citation_royalty_bps.0,
-    };
-
-    let publication = data
-        .sql_client
-        .create_publication(&new_publication)
-        .await
-        .map_err(|err| {
-            tracing::error!("Error creating publication: {}", err);
-            ErrorInternalServerError("Internal server error")
-        })?;
-
-    if let Err(err) = data
-        .sql_client
-        .set_publication_authors(publication.id, &authors)
-        .await
-    {
-        tracing::error!(
-            "Error setting authors for publication {}: {}",
-            publication.id,
-            err
-        );
-    }
-
-    process_citations(&data.sql_client, publication.id, citations).await;
-
-    // Fetch wallet addresses for all authors
-    let author_wallet_addresses = fetch_author_wallet_addresses(&data.sql_client, &authors)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to fetch author wallet addresses: {}", err);
-            ErrorInternalServerError("Failed to fetch author wallet addresses")
-        })?;
-
-    let response = serde_json::json!({
-        "publication": publication,
-        "capability": capability,
-        "author_wallets": author_wallet_addresses,
-    });
-
-    Ok(HttpResponse::Ok().json(response))
 }
 
-fn generate_capability_for_publication(
-    publication_file: &std::fs::File,
-    price: i64,
-    recipient: &str,
-) -> Result<SignedCapability, actix_web::Error> {
-    use aptos_sdk::types::account_address::AccountAddress;
+async fn run_publication_on_blockchain(
+    data: &AppState,
+    user_id: &String,
+    authors: &Vec<PrivyId>,
+    form: &CreatePublicationForm,
+) -> ZResult<Response<Transaction>> {
+    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
+        .await
+        .map_err(|err| zerror!(err))?;
 
-    let paper_hash = hash_file_sha3_256(publication_file).unwrap();
+    let pending_txn =
+        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
+            .await
+            .map_err(|err| zerror!("Failed to submit publication to blockchain: {}", err))?;
 
-    let capability_signer = CapabilitySigner::from_config(&CONFIG).map_err(|err| {
-        tracing::error!("Failed to create capability signer: {}", err);
-        ErrorInternalServerError("Internal server error")
-    })?;
+    let transaction_result = data
+        .aptos_client
+        .wait_for_transaction(&pending_txn)
+        .await
+        .map_err(|err| zerror!("Publication transaction failed: {}", err))?;
 
-    // Parse recipient address
-    let recipient_addr = AccountAddress::from_hex_literal(recipient).map_err(|err| {
-        tracing::error!("Invalid recipient address {}: {}", recipient, err);
-        ErrorBadRequest("Invalid recipient address")
-    })?;
-
-    capability_signer
-        .create_capability(&paper_hash, price as u64, &recipient_addr, 3600)
-        .map_err(|err| {
-            tracing::error!("Failed to create capability: {}", err);
-            ErrorInternalServerError("Failed to create capability")
-        })
+    Ok(transaction_result)
 }
 
-fn hash_file_sha3_256(file: &std::fs::File) -> Result<[u8; 32], std::io::Error> {
-    let mut reader = BufReader::new(file);
+async fn prepare_blockchain_transaction(
+    data: &AppState,
+    user_id: &String,
+    authors: &Vec<String>,
+    form: &CreatePublicationForm,
+) -> ZResult<PublicationData> {
+    let user_wallet = data
+        .sql_client
+        .get_wallet_address(user_id)
+        .await
+        .map(|wallet| AccountAddress::from_hex_literal(&wallet))
+        .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?
+        .map_err(|err| zerror!("Error parsing wallet: {}", err))?;
+
+    let author_wallets = data
+        .sql_client
+        .get_wallet_addresses_by_privy_ids(authors)
+        .await
+        .map_err(|err| zerror!("Error fetching authors wallet addresses from DB: {}", err))?
+        .iter()
+        .map(|wallet| AccountAddress::from_hex_literal(wallet))
+        .collect::<Result<Vec<AccountAddress>, AccountAddressParseError>>()
+        .map_err(|err| zerror!("Error parsing author wallets: {}", err))?;
+
+    // Get wallet info from Privy
+    let user_wallet_id = user_id; // TODO: store privy WALLET ID along with wallet in DB, or retrieve them somehow
+    let user_wallet_pk = data
+        .privy_client
+        .wallets()
+        .get(user_wallet_id)
+        .await
+        .map(|wallet| wallet.public_key.clone())
+        .map_err(|err| zerror!("Failed to get wallet from Privy: {}", err))?
+        .ok_or(zerror!("Wallet lacks public key!"))?;
+
+    // Generate paper hash from file (blockchain logic)
+    let paper_hash =
+        hash_file_sha3_256(&form.file).map_err(|err| zerror!("Failed to hash file: {}", err))?;
+
+    let publication_data = PublicationData {
+        paper_hash,
+        user_wallet,
+        user_wallet_id: user_wallet_id.clone(),
+        user_wallet_pk,
+        author_wallets,
+        price: form.price.0 as u64,
+    };
+
+    Ok(publication_data)
+}
+
+fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {
+    let mut reader = BufReader::new(temp_file.file.as_file());
     let mut hasher = Sha3_256::default();
 
     let mut buffer = [0u8; 8192];
@@ -221,6 +217,70 @@ fn hash_file_sha3_256(file: &std::fs::File) -> Result<[u8; 32], std::io::Error> 
 
     let result = hasher.finalize();
     Ok(result.into())
+}
+
+async fn store_publication(
+    form: &CreatePublicationForm,
+    user_id: String,
+    authors: Vec<PrivyId>,
+    data: &AppState,
+) -> ZResult<crate::db::sql::models::Publication> {
+    let tags = serde_json::from_str::<Vec<String>>(&form.tags.0)?;
+
+    let file_name = form
+        .file
+        .file_name
+        .as_ref()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unnamed.pdf".to_string());
+
+    let publication_uuid = Uuid::new_v4();
+    let s3_directory = format!("publications/{}", publication_uuid);
+    let s3key = format!("{}/{}", s3_directory, file_name);
+
+    data.s3_client
+        .store_file(&form.file, Some(s3_directory.into()))
+        .await
+        .map_err(|err| zerror!("Error uploading file to S3: {}", err))?;
+
+    let new_publication = NewPublication {
+        user_id: user_id.clone(),
+        title: form.title.0.clone(),
+        about: form.about.0.clone(),
+        tags,
+        s3key,
+        price: form.price.0,
+        citation_royalty_bps: form.citation_royalty_bps.0,
+    };
+
+    // TODO: make these SQL operations atomic
+    let publication = data
+        .sql_client
+        .create_publication(&new_publication)
+        .await
+        .map_err(|err| zerror!("Failed to create publication entry: {}", err))?;
+
+    data.sql_client
+        .set_publication_authors(publication.id, &authors)
+        .await
+        .map_err(|err| zerror!("Failed to set publication authors: {}", err))?;
+
+    if let Some(citations) = &form.citations {
+        process_citations(&data.sql_client, publication.id, citations).await;
+    }
+
+    Ok(publication)
+}
+
+fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<PrivyId>> {
+    return Ok(
+        serde_json::from_str::<Vec<PrivyId>>(authors_text).map_err(|err| {
+            zerror!(
+                "Error parsing authors: {}. Expected JSON array of author IDs.",
+                err
+            )
+        })?,
+    );
 }
 
 #[get("/{publication_id}")]
@@ -329,7 +389,7 @@ async fn update_publication(
         let s3_path = format!("{}/{}", s3_directory, file_name);
 
         data.s3_client
-            .upload_storage_files(vec![file], Some(s3_directory.into()))
+            .store_file(&file, Some(s3_directory.into()))
             .await
             .map_err(|err| {
                 tracing::error!("Error uploading file to S3: {}", err);
@@ -398,7 +458,7 @@ async fn delete_publication_internal(
                 _ => ErrorInternalServerError("Internal server error"),
             }
         })?;
-    
+
     // Check if the user is authorized to delete this publication
     if publication.user_id != user_id {
         return Err(actix_web::error::ErrorForbidden(
@@ -414,15 +474,9 @@ async fn delete_publication_internal(
     }
 
     if !publication.s3key.is_empty() {
-        if let Some(file_name) = publication.s3key.split('/').last() {
-            if let Err(err) = data
-                .s3_client
-                .delete_storage_files(vec![file_name.to_string()], None)
-                .await
-            {
-                tracing::warn!("Failed to delete S3 file {}: {}", publication.s3key, err);
-                // Continue with database deletion even if S3 deletion fails
-            }
+        if let Err(err) = data.s3_client.delete_file(S3Key(publication.s3key)).await {
+            tracing::warn!("Failed to delete S3 file: {}", err);
+            // Continue with database deletion even if S3 deletion fails
         }
     }
 
@@ -692,30 +746,10 @@ async fn get_publication_pdf_url(
     })))
 }
 
-/// Helper function to fetch wallet addresses for authors
-async fn fetch_author_wallet_addresses(
-    sql_client: &SqlClient,
-    author_ids: &[PrivyId],
-) -> Result<Vec<String>, actix_web::Error> {
-    let mut wallet_addresses = Vec::new();
-
-    for author_id in author_ids {
-        match sql_client.get_author(author_id).await {
-            Ok(author) => {
-                wallet_addresses.push(author.wallet_address);
-            }
-            Err(err) => {
-                tracing::error!("Failed to fetch author {}: {}", author_id, err);
-                return Err(ErrorInternalServerError("Failed to fetch author details"));
-            }
-        }
-    }
-
-    Ok(wallet_addresses)
-}
-
 /// Helper function to process citations for a publication
-async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citations: Vec<Uuid>) {
+async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citations: &Text<String>) {
+    let citations = serde_json::from_str::<Vec<Uuid>>(&citations.0).unwrap_or_default();
+
     for cited_publication_id in citations {
         if cited_publication_id == publication_id {
             tracing::warn!(
@@ -741,7 +775,7 @@ async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citatio
             Ok(None) => {
                 let new_citation = crate::db::sql::models::NewCitation {
                     citing_publication_id: publication_id,
-                    cited_publication_id,
+                    cited_publication_id: cited_publication_id,
                 };
 
                 if let Err(err) = sql_client.create_citation(&new_citation).await {
@@ -758,4 +792,72 @@ async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citatio
             }
         }
     }
+}
+
+#[derive(Deserialize)]
+struct UpdateTransactionStatusRequest {
+    status: String,
+    transaction_hash: Option<String>,
+}
+
+#[put("/{publication_id}/transaction-status")]
+async fn update_publication_transaction_status(
+    req: actix_web::HttpRequest,
+    publication_id: web::Path<Uuid>,
+    data: web::Data<AppState>,
+    request: web::Json<UpdateTransactionStatusRequest>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+
+    let publication = data
+        .sql_client
+        .get_publication(*publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    if publication.user_id != user_id {
+        return Err(actix_web::error::ErrorForbidden(
+            "You are not authorized to update this publication",
+        ));
+    }
+
+    let valid_statuses = ["PENDING_ONCHAIN", "PUBLISHED", "FAILED"];
+    if !valid_statuses.contains(&request.status.as_str()) {
+        return Err(ErrorBadRequest(format!(
+            "Invalid status. Must be one of: {}",
+            valid_statuses.join(", ")
+        )));
+    }
+
+    let result = data
+        .sql_client
+        .update_publication_transaction_status(
+            *publication_id,
+            &request.status,
+            request.transaction_hash.as_deref(),
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!("Error updating publication transaction status: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    if result.rows_affected() == 0 {
+        return Err(ErrorNotFound("Publication not found"));
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "message": "Publication transaction status updated successfully"
+    })))
 }

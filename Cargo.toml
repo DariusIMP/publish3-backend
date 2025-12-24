@@ -10,6 +10,7 @@ argon2 = "0.5.0"
 aptos-sdk = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
 aptos-crypto = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
 aptos-crypto-derive = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
+aptos-rest-client = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
 base64 = "0.22.1"
 bcs = "0.1.6"
 chrono = { version = "0.4.41", features = ["serde"] }
@@ -60,7 +61,6 @@ sha3 = "0.10.8"
 
 [patch.crates-io]
 merlin = { git = "https://github.com/aptos-labs/merlin" }
-x25519-dalek = { git = "https://github.com/aptos-labs/x25519-dalek", branch = "zeroize_v1" }
 
 [dev-dependencies]
 dotenvy = "0.15"

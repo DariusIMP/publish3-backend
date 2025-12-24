@@ -156,7 +156,7 @@ impl PublicationAuthorOperations for SqlClient {
 
         sqlx::query_as::<_, super::models::Publication>(
             r#"
-            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.created_at, p.updated_at
+            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.status, p.transaction_hash, p.created_at, p.updated_at
             FROM publications p
             INNER JOIN publication_authors pa ON p.id = pa.publication_id
             WHERE pa.author_id = $1

@@ -1,6 +1,7 @@
 use aptos_crypto::{SigningKey, ed25519::Ed25519PrivateKey};
 use aptos_crypto_derive::{BCSCryptoHash, CryptoHasher};
 use aptos_sdk::types::account_address::AccountAddress;
+use base64::{Engine, engine::general_purpose};
 
 use crate::config::Config;
 
@@ -31,7 +32,8 @@ pub struct CapabilitySigner {
 
 impl CapabilitySigner {
     pub fn from_config(config: &Config) -> Result<Self, BlockchainError> {
-        let private_key_bytes = base64::decode(&config.backend_private_key)
+        let private_key_bytes = general_purpose::STANDARD
+            .decode(&config.backend_private_key)
             .map_err(|e| BlockchainError::ConfigError(format!("Invalid private key base64: {}", e)))
             .or_else(|_| {
                 hex::decode(&config.backend_private_key).map_err(|e| {
