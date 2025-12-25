@@ -18,6 +18,7 @@ use aptos_sdk::{
     },
 };
 use privy_rs::PrivyClient;
+use sha3::{Digest, Sha3_256};
 pub use signing::{CapabilitySigner, SignedCapability};
 
 use crate::{CONFIG, common::zresult::ZResult, zerror};
@@ -65,9 +66,15 @@ async fn submit_publish_transaction(
 ) -> ZResult<PendingTransaction> {
     let account = aptos.get_account(data.user_wallet).await?.into_inner();
     let chain_id = aptos.get_index().await?.into_inner().chain_id;
+    let module_id =
+        ModuleId::from_str(format!("{}::publication_registry", CONFIG.contract_address).as_str())
+            .map_err(|err| {
+            tracing::error!("Failed to parse module id: {}", err);
+            err
+        })?;
 
     let publish_entry_function = EntryFunction::new(
-        ModuleId::from_str("0x1::publish3::publication_registry")?,
+        module_id,
         Identifier::new("publish")?,
         vec![],
         vec![bcs::to_bytes(&data.author_wallets)?],
@@ -125,9 +132,16 @@ async fn mint_publish_capability(
     data: &PublicationData,
     capability: &SignedCapability,
 ) -> ZResult<Response<Transaction>> {
+    let identifier = Identifier::new("mint_publish_capability_with_sig")?;
+    let module_id =
+        ModuleId::from_str(format!("{}::publication_registry", CONFIG.contract_address).as_str())
+            .map_err(|err| {
+            tracing::error!("Failed to parse module id: {}", err);
+            err
+        })?;
     let mint_capability_entry_function = EntryFunction::new(
-        ModuleId::from_str("0x1::publish3::publication_registry")?,
-        Identifier::new("mint_publish_capability_with_sig")?,
+        module_id,
+        identifier,
         vec![],
         vec![
             bcs::to_bytes(&data.paper_hash)?,
@@ -138,8 +152,24 @@ async fn mint_publish_capability(
         ],
     );
 
-    let account = aptos.get_account(data.user_wallet).await?.into_inner();
-    let chain_id = aptos.get_index().await?.into_inner().chain_id;
+    let account = aptos
+        .get_account(data.user_wallet)
+        .await
+        .map_err(|err| {
+            tracing::debug!("Failed to fetch user wallet account: {}", err);
+            err
+        })?
+        .into_inner();
+
+    let chain_id = aptos
+        .get_index()
+        .await
+        .map_err(|err| {
+            tracing::debug!("Failed to get chain id: {}", err);
+            err
+        })?
+        .into_inner()
+        .chain_id;
 
     let expiration_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 60;
 
@@ -152,15 +182,21 @@ async fn mint_publish_capability(
         expiration_timestamp,
         ChainId::new(chain_id),
     );
+
+    let mint_signature_hex = sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn)
+        .await
+        .map_err(|err| zerror!("Failed to sign mint transaction with Privy: {}", err))?;
+
     let user_wallet_pk = hex::decode(data.user_wallet_pk.trim_start_matches("0x"))
         .map_err(|err| zerror!("Failed to decode public key: {}", err))?;
-
-    let mint_signature_hex =
-        sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn).await?;
     let mint_authenticator = build_authenticator(&user_wallet_pk, &mint_signature_hex)?;
     let mint_capability_signed_txn =
         SignedTransaction::new_signed_transaction(mint_capability_raw_txn, mint_authenticator);
 
+    tracing::debug!(
+        "Submitting transaction for minting capability: {:?}",
+        mint_capability_signed_txn
+    );
     let mint_capability_transaction = aptos
         .submit(&mint_capability_signed_txn)
         .await?
@@ -187,29 +223,39 @@ fn build_authenticator(
     })
 }
 
-/// Sign a transaction using Privy wallet
 async fn sign_with_privy(
     privy: &PrivyClient,
     wallet_id: &str,
     raw_txn: &RawTransaction,
 ) -> ZResult<String> {
-    let signing_message = raw_txn.signing_message()?;
-    let signing_message_hex = format!("0x{}", hex::encode(signing_message.clone()));
+    let raw_txn_bytes = raw_txn.signing_message()?;
+
+    let mut signing_message = b"APTOS::RawTransaction".to_vec();
+    signing_message.extend(raw_txn_bytes);
+
+    let hash = Sha3_256::digest(&signing_message);
+    let message_hex = format!("0x{}", hex::encode(&hash));
 
     let body = RawSign {
-        params: RawSignParams::Variant0 {
-            hash: signing_message_hex.clone(),
-        },
+        params: RawSignParams::Variant0 { hash: message_hex },
     };
 
-    let idempotency_key = format!("aptos-raw-sign:{}", hex::encode(signing_message));
+    let idempotency_key = format!("aptos-raw-sign:{}", hex::encode(&signing_message));
     let ctx = AuthorizationContext::default();
-
     let response = privy
         .wallets()
         .raw_sign(wallet_id, &ctx, Some(&idempotency_key), &body)
-        .await?;
+        .await;
 
-    let signature_hex = response.data.signature.trim_start_matches("0x");
-    Ok(signature_hex.to_string())
+    match response {
+        Ok(resp) => {
+            tracing::debug!("Privy raw_sign response received");
+            let signature_hex = resp.data.signature.trim_start_matches("0x").to_string();
+            Ok(signature_hex)
+        }
+        Err(err) => {
+            tracing::error!("Privy signature failed: {:?}", err);
+            Err(zerror!("Privy signature failed: {}", err))
+        }
+    }
 }

@@ -163,7 +163,7 @@ async fn prepare_blockchain_transaction(
         .get_primary_wallet(user_id)
         .await
         .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?;
-    
+
     let user_wallet_account = AccountAddress::from_hex_literal(&user_wallet.wallet_address)
         .map_err(|err| zerror!("Error parsing user wallet address: {}", err))?;
 
@@ -173,7 +173,7 @@ async fn prepare_blockchain_transaction(
         .get_primary_wallets(authors)
         .await
         .map_err(|err| zerror!("Error fetching authors wallets from DB: {}", err))?;
-    
+
     let authors_wallets_accounts = authors_wallets
         .iter()
         .map(|wallet| AccountAddress::from_hex_literal(&wallet.wallet_address))
