@@ -3,6 +3,7 @@ use actix_web::{
     error::{ErrorConflict, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
 };
+use privy_rs::generated::types::*;
 use serde::Deserialize;
 
 use crate::{
@@ -30,8 +31,6 @@ pub struct CreateAuthorRequest {
     name: String,
     email: Option<String>,
     affiliation: Option<String>,
-    wallet_id: String,
-    wallet_address: String,
 }
 
 #[post("/create")]
@@ -57,9 +56,28 @@ async fn create_author(
         }
     }
 
+    let privy = data.privy_client.clone();
+    let wallet = privy
+        .wallets()
+        .create(
+            Some(&request.privy_id),
+            &CreateWalletBody {
+                chain_type: WalletChainType::Movement,
+                owner_id: Some(OwnerIdInput("fh46bvza57oyppddqozmf627".to_string())),
+                owner: None,
+                policy_ids: vec![],
+                additional_signers: None,
+            },
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to create author wallet: {}", err);
+            ErrorInternalServerError("Failed to create wallet for author.")
+        })?;
+
     let new_wallet = NewWallet {
-        wallet_id: request.wallet_id.clone(),
-        wallet_address: request.wallet_address.clone(),
+        wallet_id: wallet.id.clone(),
+        wallet_address: wallet.address.clone(),
     };
 
     data.sql_client
@@ -72,7 +90,7 @@ async fn create_author(
 
     let new_user_wallet = NewUserWallet {
         user_id: request.privy_id.clone(),
-        wallet_id: request.wallet_id.clone(),
+        wallet_id: wallet.id.clone(),
         is_primary: true,
     };
 
@@ -133,7 +151,6 @@ async fn update_author(
     request: web::Json<UpdateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-
     // Check if new email already exists (if email is being updated)
     if let Some(email) = &request.email {
         let email_exists = data

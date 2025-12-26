@@ -140,7 +140,11 @@ async fn run_publication_on_blockchain(
     let pending_txn =
         submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
             .await
-            .map_err(|err| zerror!("Failed to submit publication to blockchain: {}", err))?;
+            .map_err(|err| {
+                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
+                tracing::debug!(error_msg);
+                zerror!(error_msg)
+            })?;
 
     let transaction_result = data
         .aptos_client
