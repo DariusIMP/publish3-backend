@@ -17,13 +17,18 @@ use actix_web::{
     error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
 };
-use aptos_rest_client::{Response, Transaction};
-use aptos_sdk::{
-    move_types::account_address::AccountAddressParseError, types::account_address::AccountAddress,
+
+use aptos_rust_sdk_types::{
+    api_types::address::{AccountAddress, AccountAddressParseError},
+    state::State,
 };
 use serde::Deserialize;
+use serde_json::Value;
 use sha3::{Digest, Sha3_256};
-use std::io::{BufReader, Read};
+use std::{
+    io::{BufReader, Read},
+    str::FromStr,
+};
 use uuid::Uuid;
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -76,14 +81,14 @@ async fn create_publication(
         .await
         .map_err(|err| ErrorInternalServerError(err))?;
 
-    Ok(HttpResponse::Ok().json(response.inner()))
+    Ok(HttpResponse::Ok().json(response))
 }
 
 async fn handle_publication(
     user_id: &String,
     form: &CreatePublicationForm,
     data: &AppState,
-) -> ZResult<Response<Transaction>> {
+) -> ZResult<Value> {
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
@@ -92,33 +97,20 @@ async fn handle_publication(
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
     match run_publication_on_blockchain(data, user_id, &authors, form).await {
-        Ok(transaction_response) => {
-            if transaction_response.inner().success() {
-                let transaction_info = transaction_response
-                    .inner()
-                    .transaction_info()
-                    .map_err(|err| zerror!("Failed to obtain transaction info: {}", err))?;
-                let transaction_hash = transaction_info.hash.clone();
-                let result = data
-                    .sql_client
-                    .update_publication_transaction_status(
-                        publication.id,
-                        "PUBLISHED",
-                        Some(&transaction_hash.0.to_string()),
-                    )
-                    .await;
+        Ok((value, _state)) => {
+            let result = data
+                .sql_client
+                .update_publication_transaction_status(
+                    publication.id,
+                    "PUBLISHED",
+                    Some(value.to_string().as_str()), // TODO: how do I get the hash??
+                )
+                .await;
 
-                if let Err(err) = result {
-                    tracing::error!("Failed to update publication status on DB: {}", err);
-                }
-                return Ok(transaction_response);
-            } else {
-                let _ = delete_publication_internal(data, publication.id, user_id).await;
-                return Err(zerror!(
-                    "The publication transaction failed: {:?}",
-                    transaction_response.inner()
-                ));
+            if let Err(err) = result {
+                tracing::error!("Failed to update publication status on DB: {}", err);
             }
+            return Ok(value);
         }
         Err(err) => {
             let _ = delete_publication_internal(data, publication.id, user_id).await;
@@ -132,27 +124,20 @@ async fn run_publication_on_blockchain(
     user_id: &String,
     authors: &Vec<PrivyId>,
     form: &CreatePublicationForm,
-) -> ZResult<Response<Transaction>> {
+) -> ZResult<(Value, State)> {
     let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
         .await
         .map_err(|err| zerror!(err))?;
 
-    let pending_txn =
+    Ok(
         submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
             .await
             .map_err(|err| {
                 let error_msg = format!("Failed to submit publication to blockchain: {}", err);
                 tracing::debug!(error_msg);
                 zerror!(error_msg)
-            })?;
-
-    let transaction_result = data
-        .aptos_client
-        .wait_for_transaction(&pending_txn)
-        .await
-        .map_err(|err| zerror!("Publication transaction failed: {}", err))?;
-
-    Ok(transaction_result)
+            })?,
+    )
 }
 
 async fn prepare_blockchain_transaction(
@@ -168,7 +153,7 @@ async fn prepare_blockchain_transaction(
         .await
         .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?;
 
-    let user_wallet_account = AccountAddress::from_hex_literal(&user_wallet.wallet_address)
+    let user_wallet_account = AccountAddress::from_str(&user_wallet.wallet_address)
         .map_err(|err| zerror!("Error parsing user wallet address: {}", err))?;
 
     // Get authors' primary wallets
@@ -180,7 +165,7 @@ async fn prepare_blockchain_transaction(
 
     let authors_wallets_accounts = authors_wallets
         .iter()
-        .map(|wallet| AccountAddress::from_hex_literal(&wallet.wallet_address))
+        .map(|wallet| AccountAddress::from_str(&wallet.wallet_address))
         .collect::<Result<Vec<AccountAddress>, AccountAddressParseError>>()
         .map_err(|err| zerror!("Error parsing author wallet addresses: {}", err))?;
 

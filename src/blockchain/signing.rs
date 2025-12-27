@@ -1,6 +1,6 @@
-use aptos_crypto::{SigningKey, ed25519::Ed25519PrivateKey};
+use aptos_crypto::{SigningKey, ed25519::PrivateKey};
 use aptos_crypto_derive::{BCSCryptoHash, CryptoHasher};
-use aptos_sdk::types::account_address::AccountAddress;
+use aptos_rust_sdk_types::api_types::address::AccountAddress;
 use base64::{Engine, engine::general_purpose};
 
 use crate::config::Config;
@@ -22,12 +22,12 @@ pub struct SignedCapability {
 struct MintPayload {
     paper_hash: Vec<u8>,
     price: u64,
-    recipient: Vec<u8>,
+    recipient: AccountAddress,
     expires_at: u64,
 }
 
 pub struct CapabilitySigner {
-    private_key: Ed25519PrivateKey,
+    private_key: PrivateKey,
 }
 
 impl CapabilitySigner {
@@ -41,10 +41,9 @@ impl CapabilitySigner {
                 })
             })?;
 
-        let private_key =
-            Ed25519PrivateKey::try_from(private_key_bytes.as_slice()).map_err(|e| {
-                BlockchainError::ConfigError(format!("Invalid Ed25519 private key: {}", e))
-            })?;
+        let private_key = PrivateKey::try_from(private_key_bytes.as_slice()).map_err(|e| {
+            BlockchainError::ConfigError(format!("Invalid Ed25519 private key: {}", e))
+        })?;
 
         Ok(Self { private_key })
     }
@@ -65,11 +64,28 @@ impl CapabilitySigner {
         let payload = MintPayload {
             paper_hash: paper_hash.to_vec(),
             price,
-            recipient: recipient.to_vec(),
+            recipient: *recipient,
             expires_at,
         };
 
+        // Log payload bytes for debugging
+        let payload_bytes = bcs::to_bytes(&payload).map_err(|e| {
+            BlockchainError::SerializationError(format!("Failed to serialize payload: {}", e))
+        })?;
+        tracing::debug!("MintPayload bytes (hex): {}", hex::encode(&payload_bytes));
+        tracing::debug!(
+            "MintPayload fields: paper_hash={}, price={}, recipient={}, expires_at={}",
+            hex::encode(paper_hash),
+            price,
+            recipient,
+            expires_at
+        );
+
         let signature = self.private_key.sign(&payload).unwrap();
+        tracing::debug!(
+            "Generated signature (hex): {}",
+            hex::encode(signature.to_bytes())
+        );
 
         Ok(SignedCapability {
             paper_hash: hex::encode(paper_hash),

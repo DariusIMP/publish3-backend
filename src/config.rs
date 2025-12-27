@@ -22,6 +22,7 @@ pub struct Config {
     // Movement blockchain configuration
     pub movement_network: String,
     pub movement_rpc_url: String,
+    pub movement_indexer_url: String,
     pub contract_address: String,
 
     // Privy authentication
@@ -52,6 +53,7 @@ impl Config {
         // Movement blockchain configuration
         let movement_network = get_env_var("MOVEMENT_NETWORK");
         let movement_rpc_url = get_env_var("MOVEMENT_RPC_URL");
+        let movement_indexer_url = get_env_var("MOVEMENT_INDEXER_URL");
         let contract_address = get_env_var("CONTRACT_ADDRESS");
 
         // Privy configuration
@@ -80,6 +82,7 @@ impl Config {
             s3_endpoint,
             movement_network,
             movement_rpc_url,
+            movement_indexer_url,
             contract_address,
             privy_app_id,
             privy_app_secret,

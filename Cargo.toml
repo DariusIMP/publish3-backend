@@ -7,10 +7,14 @@ edition = "2024"
 actix-cors = "0.7.1"
 actix-web = "4.11.0"
 argon2 = "0.5.0"
-aptos-sdk = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
-aptos-crypto = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
-aptos-crypto-derive = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
-aptos-rest-client = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
+# aptos-sdk = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
+# aptos-rest-client = { git = "https://github.com/aptos-labs/aptos-core", branch = "devnet" }
+aptos-bcs = "0.1.4"
+aptos-crypto = { git = "https://github.com/aptos-labs/aptos-rust-sdk", package = "aptos-crypto", branch = "main" }
+aptos-crypto-derive = { git = "https://github.com/aptos-labs/aptos-rust-sdk", package = "aptos-crypto-derive", branch = "main" }
+aptos-rust-sdk = { git = "https://github.com/aptos-labs/aptos-rust-sdk", package = "aptos-rust-sdk", branch = "main" }
+aptos-rust-sdk-types = { git = "https://github.com/aptos-labs/aptos-rust-sdk", package = "aptos-rust-sdk-types", branch = "main" }
+
 base64 = "0.22.1"
 bcs = "0.1.6"
 chrono = { version = "0.4.41", features = ["serde"] }

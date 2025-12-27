@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     config::Config,
@@ -9,6 +9,8 @@ use crate::{
 };
 use actix_cors::Cors;
 use actix_web::{App, HttpServer, http::header, middleware, web};
+use aptos_rust_sdk::client::config::AptosNetwork;
+use aptos_rust_sdk::client::{builder::AptosClientBuilder, rest_api::AptosFullnodeClient};
 use aws_sdk_s3::config::Credentials;
 use dotenv::dotenv;
 use lazy_static::lazy_static;
@@ -17,8 +19,6 @@ use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
-
-use aptos_sdk::rest_client::Client as AptosClient;
 use url::Url;
 
 pub mod api;
@@ -31,7 +31,7 @@ pub mod db;
 pub struct AppState {
     sql_client: Arc<SqlClient>,
     s3_client: Arc<S3Client>,
-    aptos_client: Arc<AptosClient>,
+    aptos_client: Arc<AptosFullnodeClient>,
     privy_client: Arc<PrivyClient>,
 }
 
@@ -52,9 +52,13 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     let privy_client = Arc::new(PrivyClient::new_from_env().unwrap());
-    let aptos_client = Arc::new(AptosClient::new(
-        Url::from_str(&CONFIG.movement_rpc_url).unwrap(),
+    let builder = AptosClientBuilder::new(AptosNetwork::new(
+        &CONFIG.movement_network,
+        Url::parse(CONFIG.movement_rpc_url.as_str()).unwrap(),
+        Url::parse(CONFIG.movement_indexer_url.as_str()).unwrap(),
     ));
+
+    let aptos_client = Arc::new(builder.build());
 
     let pool = match PgPoolOptions::new()
         .max_connections(10)

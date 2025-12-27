@@ -1,3 +1,4 @@
+use aptos_rust_sdk_types::error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -39,8 +40,8 @@ pub enum BlockchainError {
     ValidationError(String),
 }
 
-impl From<aptos_sdk::rest_client::error::RestError> for BlockchainError {
-    fn from(err: aptos_sdk::rest_client::error::RestError) -> Self {
+impl From<error::RestError> for BlockchainError {
+    fn from(err: error::RestError) -> Self {
         BlockchainError::NetworkError(err.to_string())
     }
 }
