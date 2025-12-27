@@ -142,27 +142,17 @@ async fn mint_publish_capability(
         AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),
         "publication_registry".to_string(),
     );
-    let signature_bytes = hex::decode(&capability.signature).map_err(|e| {
-        tracing::error!("Failed to decode hex signature: {}", e);
-        zerror!(e)
-    })?;
-
-    tracing::debug!("Capability signature (hex): {}", &capability.signature);
-    tracing::debug!(
-        "Capability signature (bytes length): {}",
-        signature_bytes.len()
-    );
 
     let mint_capability_entry_function = EntryFunction::new(
         module_id,
         "mint_publish_capability_with_sig".to_string(),
         vec![],
         vec![
-            bcs::to_bytes(&data.paper_hash)?,
-            bcs::to_bytes(&data.price)?,
-            bcs::to_bytes(&data.user_wallet)?,
-            bcs::to_bytes(&capability.expires_at)?,
-            signature_bytes.clone(),
+            bcs::to_bytes(&capability.mint_payload.paper_hash)?,
+            bcs::to_bytes(&capability.mint_payload.price)?,
+            bcs::to_bytes(&capability.mint_payload.recipient)?,
+            bcs::to_bytes(&capability.mint_payload.expires_at)?,
+            bcs::to_bytes(&capability.signature.to_bytes().to_vec())?,
         ],
     );
 

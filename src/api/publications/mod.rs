@@ -98,12 +98,19 @@ async fn handle_publication(
 
     match run_publication_on_blockchain(data, user_id, &authors, form).await {
         Ok((value, _state)) => {
+            tracing::debug!("Publication to blockchain successful: {:?}", value);
+
+            let transaction_hash = value
+                .get("hash")
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string());
+
             let result = data
                 .sql_client
                 .update_publication_transaction_status(
                     publication.id,
                     "PUBLISHED",
-                    Some(value.to_string().as_str()), // TODO: how do I get the hash??
+                    transaction_hash.as_deref(),
                 )
                 .await;
 
