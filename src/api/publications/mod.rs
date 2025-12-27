@@ -71,7 +71,6 @@ async fn create_publication(
     MultipartForm(form): MultipartForm<CreatePublicationForm>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    // Get user ID from authenticated user
     let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
@@ -96,7 +95,20 @@ async fn handle_publication(
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
-    match run_publication_on_blockchain(data, user_id, &authors, form).await {
+    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
+        .await
+        .map_err(|err| zerror!(err))?;
+
+    let response =
+        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
+            .await
+            .map_err(|err| {
+                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
+                tracing::debug!(error_msg);
+                zerror!(error_msg)
+            });
+
+    match response {
         Ok((value, _state)) => {
             tracing::debug!("Publication to blockchain successful: {:?}", value);
 
@@ -124,27 +136,6 @@ async fn handle_publication(
             return Err(zerror!("The publication transaction failed: {}", err));
         }
     };
-}
-
-async fn run_publication_on_blockchain(
-    data: &AppState,
-    user_id: &String,
-    authors: &Vec<PrivyId>,
-    form: &CreatePublicationForm,
-) -> ZResult<(Value, State)> {
-    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
-        .await
-        .map_err(|err| zerror!(err))?;
-
-    Ok(
-        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
-            .await
-            .map_err(|err| {
-                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
-                tracing::debug!(error_msg);
-                zerror!(error_msg)
-            })?,
-    )
 }
 
 async fn prepare_blockchain_transaction(
