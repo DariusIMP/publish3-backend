@@ -18,12 +18,8 @@ use actix_web::{
     get, post, put, web,
 };
 
-use aptos_rust_sdk_types::{
-    api_types::address::{AccountAddress, AccountAddressParseError},
-    state::State,
-};
-use serde::Deserialize;
-use serde_json::Value;
+use aptos_rust_sdk_types::api_types::address::{AccountAddress, AccountAddressParseError};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{
     io::{BufReader, Read},
@@ -81,197 +77,6 @@ async fn create_publication(
         .map_err(|err| ErrorInternalServerError(err))?;
 
     Ok(HttpResponse::Ok().json(response))
-}
-
-async fn handle_publication(
-    user_id: &String,
-    form: &CreatePublicationForm,
-    data: &AppState,
-) -> ZResult<Value> {
-    let authors =
-        parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
-
-    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
-        .await
-        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
-
-    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
-        .await
-        .map_err(|err| zerror!(err))?;
-
-    let response =
-        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
-            .await
-            .map_err(|err| {
-                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
-                tracing::debug!(error_msg);
-                zerror!(error_msg)
-            });
-
-    match response {
-        Ok((value, _state)) => {
-            tracing::debug!("Publication to blockchain successful: {:?}", value);
-
-            let transaction_hash = value
-                .get("hash")
-                .and_then(|h| h.as_str())
-                .map(|s| s.to_string());
-
-            let result = data
-                .sql_client
-                .update_publication_transaction_status(
-                    publication.id,
-                    "PUBLISHED",
-                    transaction_hash.as_deref(),
-                )
-                .await;
-
-            if let Err(err) = result {
-                tracing::error!("Failed to update publication status on DB: {}", err);
-            }
-            return Ok(value);
-        }
-        Err(err) => {
-            let _ = delete_publication_internal(data, publication.id, user_id).await;
-            return Err(zerror!("The publication transaction failed: {}", err));
-        }
-    };
-}
-
-async fn prepare_blockchain_transaction(
-    data: &AppState,
-    user_id: &String,
-    authors: &Vec<String>,
-    form: &CreatePublicationForm,
-) -> ZResult<PublicationData> {
-    // Get user's primary wallet
-    let user_wallet = data
-        .sql_client
-        .get_primary_wallet(user_id)
-        .await
-        .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?;
-
-    let user_wallet_account = AccountAddress::from_str(&user_wallet.wallet_address)
-        .map_err(|err| zerror!("Error parsing user wallet address: {}", err))?;
-
-    // Get authors' primary wallets
-    let authors_wallets = data
-        .sql_client
-        .get_primary_wallets(authors)
-        .await
-        .map_err(|err| zerror!("Error fetching authors wallets from DB: {}", err))?;
-
-    let authors_wallets_accounts = authors_wallets
-        .iter()
-        .map(|wallet| AccountAddress::from_str(&wallet.wallet_address))
-        .collect::<Result<Vec<AccountAddress>, AccountAddressParseError>>()
-        .map_err(|err| zerror!("Error parsing author wallet addresses: {}", err))?;
-
-    // Get wallet info from Privy
-    let user_wallet_pk = data
-        .privy_client
-        .wallets()
-        .get(&user_wallet.wallet_id)
-        .await
-        .map(|wallet| wallet.public_key.clone())
-        .map_err(|err| zerror!("Failed to get wallet from Privy: {}", err))?
-        .ok_or(zerror!("Wallet lacks public key!"))?;
-
-    // Generate paper hash from file (blockchain logic)
-    let paper_hash =
-        hash_file_sha3_256(&form.file).map_err(|err| zerror!("Failed to hash file: {}", err))?;
-
-    let publication_data = PublicationData {
-        paper_hash,
-        user_wallet: user_wallet_account,
-        user_wallet_id: (&user_wallet.wallet_id).clone(),
-        user_wallet_pk,
-        author_wallets: authors_wallets_accounts,
-        price: form.price.0 as u64,
-    };
-
-    Ok(publication_data)
-}
-
-fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {
-    let mut reader = BufReader::new(temp_file.file.as_file());
-    let mut hasher = Sha3_256::default();
-
-    let mut buffer = [0u8; 8192];
-    loop {
-        let n = reader.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        digest::DynDigest::update(&mut hasher, &buffer[..n]);
-    }
-
-    let result = hasher.finalize();
-    Ok(result.into())
-}
-
-async fn store_publication(
-    form: &CreatePublicationForm,
-    user_id: String,
-    authors: Vec<PrivyId>,
-    data: &AppState,
-) -> ZResult<crate::db::sql::models::Publication> {
-    let tags = serde_json::from_str::<Vec<String>>(&form.tags.0)?;
-
-    let file_name = form
-        .file
-        .file_name
-        .as_ref()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| "unnamed.pdf".to_string());
-
-    let publication_uuid = Uuid::new_v4();
-    let s3_directory = format!("publications/{}", publication_uuid);
-    let s3key = format!("{}/{}", s3_directory, file_name);
-
-    data.s3_client
-        .store_file(&form.file, Some(s3_directory.into()))
-        .await
-        .map_err(|err| zerror!("Error uploading file to S3: {}", err))?;
-
-    let new_publication = NewPublication {
-        user_id: user_id.clone(),
-        title: form.title.0.clone(),
-        about: form.about.0.clone(),
-        tags,
-        s3key,
-        price: form.price.0,
-        citation_royalty_bps: form.citation_royalty_bps.0,
-    };
-
-    // TODO: make these SQL operations atomic
-    let publication = data
-        .sql_client
-        .create_publication(&new_publication)
-        .await
-        .map_err(|err| zerror!("Failed to create publication entry: {}", err))?;
-
-    data.sql_client
-        .set_publication_authors(publication.id, &authors)
-        .await
-        .map_err(|err| zerror!("Failed to set publication authors: {}", err))?;
-
-    if let Some(citations) = &form.citations {
-        process_citations(&data.sql_client, publication.id, citations).await;
-    }
-
-    Ok(publication)
-}
-
-fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<PrivyId>> {
-    return Ok(
-        serde_json::from_str::<Vec<PrivyId>>(authors_text).map_err(|err| {
-            zerror!(
-                "Error parsing authors: {}. Expected JSON array of author IDs.",
-                err
-            )
-        })?,
-    );
 }
 
 #[get("/{publication_id}")]
@@ -851,4 +656,200 @@ async fn update_publication_transaction_status(
         "status": "success",
         "message": "Publication transaction status updated successfully"
     })))
+}
+
+#[derive(Serialize)]
+struct PublicationResponse {
+    id: Uuid,
+    transaction_hash: String,
+}
+
+async fn handle_publication(
+    user_id: &String,
+    form: &CreatePublicationForm,
+    data: &AppState,
+) -> ZResult<PublicationResponse> {
+    let authors =
+        parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
+
+    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
+        .await
+        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
+
+    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
+        .await
+        .map_err(|err| zerror!(err))?;
+
+    let response =
+        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
+            .await
+            .map_err(|err| {
+                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
+                tracing::debug!(error_msg);
+                zerror!(error_msg)
+            });
+
+    match response {
+        Ok((value, _state)) => {
+            tracing::debug!("Publication to blockchain successful: {:?}", value);
+
+            let transaction_hash = value
+                .get("hash")
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string());
+
+            let result = data
+                .sql_client
+                .update_publication_transaction_status(
+                    publication.id,
+                    "PUBLISHED",
+                    transaction_hash.as_deref(),
+                )
+                .await;
+
+            if let Err(err) = result {
+                tracing::error!("Failed to update publication status on DB: {}", err);
+            }
+            return Ok(PublicationResponse {
+                id: publication.id,
+                transaction_hash: transaction_hash.unwrap(),
+            });
+        }
+        Err(err) => {
+            let _ = delete_publication_internal(data, publication.id, user_id).await;
+            return Err(zerror!("The publication transaction failed: {}", err));
+        }
+    };
+}
+
+async fn prepare_blockchain_transaction(
+    data: &AppState,
+    user_id: &String,
+    authors: &Vec<String>,
+    form: &CreatePublicationForm,
+) -> ZResult<PublicationData> {
+    let user_wallet = data
+        .sql_client
+        .get_primary_wallet(user_id)
+        .await
+        .map_err(|err| zerror!("Error retrieving user wallet from DB: {}", err))?;
+
+    let user_wallet_account = AccountAddress::from_str(&user_wallet.wallet_address)
+        .map_err(|err| zerror!("Error parsing user wallet address: {}", err))?;
+
+    let authors_wallets = data
+        .sql_client
+        .get_primary_wallets(authors)
+        .await
+        .map_err(|err| zerror!("Error fetching authors wallets from DB: {}", err))?;
+
+    let authors_wallets_accounts = authors_wallets
+        .iter()
+        .map(|wallet| AccountAddress::from_str(&wallet.wallet_address))
+        .collect::<Result<Vec<AccountAddress>, AccountAddressParseError>>()
+        .map_err(|err| zerror!("Error parsing author wallet addresses: {}", err))?;
+
+    let user_wallet_pk = data
+        .privy_client
+        .wallets()
+        .get(&user_wallet.wallet_id)
+        .await
+        .map(|wallet| wallet.public_key.clone())
+        .map_err(|err| zerror!("Failed to get wallet from Privy: {}", err))?
+        .ok_or(zerror!("Wallet lacks public key!"))?;
+
+    let paper_hash =
+        hash_file_sha3_256(&form.file).map_err(|err| zerror!("Failed to hash file: {}", err))?;
+
+    let publication_data = PublicationData {
+        paper_hash,
+        user_wallet: user_wallet_account,
+        user_wallet_id: (&user_wallet.wallet_id).clone(),
+        user_wallet_pk,
+        author_wallets: authors_wallets_accounts,
+        price: form.price.0 as u64,
+    };
+
+    Ok(publication_data)
+}
+
+fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {
+    let mut reader = BufReader::new(temp_file.file.as_file());
+    let mut hasher = Sha3_256::default();
+
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        digest::DynDigest::update(&mut hasher, &buffer[..n]);
+    }
+
+    let result = hasher.finalize();
+    Ok(result.into())
+}
+
+async fn store_publication(
+    form: &CreatePublicationForm,
+    user_id: String,
+    authors: Vec<PrivyId>,
+    data: &AppState,
+) -> ZResult<crate::db::sql::models::Publication> {
+    let tags = serde_json::from_str::<Vec<String>>(&form.tags.0)?;
+
+    let file_name = form
+        .file
+        .file_name
+        .as_ref()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unnamed.pdf".to_string());
+
+    let publication_uuid = Uuid::new_v4();
+    let s3_directory = format!("publications/{}", publication_uuid);
+    let s3key = format!("{}/{}", s3_directory, file_name);
+
+    data.s3_client
+        .store_file(&form.file, Some(s3_directory.into()))
+        .await
+        .map_err(|err| zerror!("Error uploading file to S3: {}", err))?;
+
+    let new_publication = NewPublication {
+        user_id: user_id.clone(),
+        title: form.title.0.clone(),
+        about: form.about.0.clone(),
+        tags,
+        s3key,
+        price: form.price.0,
+        citation_royalty_bps: form.citation_royalty_bps.0,
+    };
+
+    // TODO: make these SQL operations atomic
+    let publication = data
+        .sql_client
+        .create_publication(&new_publication)
+        .await
+        .map_err(|err| zerror!("Failed to create publication entry: {}", err))?;
+
+    data.sql_client
+        .set_publication_authors(publication.id, &authors)
+        .await
+        .map_err(|err| zerror!("Failed to set publication authors: {}", err))?;
+
+    if let Some(citations) = &form.citations {
+        process_citations(&data.sql_client, publication.id, citations).await;
+    }
+
+    Ok(publication)
+}
+
+fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<PrivyId>> {
+    return Ok(
+        serde_json::from_str::<Vec<PrivyId>>(authors_text).map_err(|err| {
+            zerror!(
+                "Error parsing authors: {}. Expected JSON array of author IDs.",
+                err
+            )
+        })?,
+    );
 }

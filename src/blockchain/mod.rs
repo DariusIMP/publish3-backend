@@ -110,7 +110,7 @@ async fn submit_publish_transaction(
         .into_parts())
 }
 
-/// This backend server generates a [SignedCapability] that allows the user's wallet to sign
+/// Generates a [SignedCapability] that allows the user's wallet to sign
 /// the subsequent publication transaction from the smart contract.
 ///
 /// Think of the signed capability as a token given to the client, allowing it to interact with
@@ -171,8 +171,6 @@ async fn mint_publish_capability(
         ChainId::from_u8(chain_id),
     );
 
-    tracing::debug!("Raw txn: {:?}", mint_capability_raw_txn);
-
     let sign_response =
         sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn).await?;
 
@@ -181,15 +179,16 @@ async fn mint_publish_capability(
     let mint_capability_signed_txn =
         SignedTransaction::new(mint_capability_raw_txn, mint_authenticator);
 
-    tracing::debug!("Signed txn: {:?}", mint_capability_signed_txn);
-
-    tracing::debug!("Submitting transaction...");
-
+    tracing::debug!(
+        "Submitting transaction: {:?}",
+        mint_capability_signed_txn.raw_txn()
+    );
     Ok(aptos
         .submit_transaction(mint_capability_signed_txn)
         .await?
         .into_parts())
 }
+
 
 async fn find_account_sequence_number(aptos: &AptosFullnodeClient, address: String) -> u64 {
     let resource = aptos

@@ -3,41 +3,14 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum BlockchainError {
-    #[error("Movement SDK error: {0}")]
-    SdkError(String),
-
-    #[error("Transaction failed: {0}")]
-    TransactionError(String),
-
-    #[error("Contract interaction error: {0}")]
-    ContractError(String),
-
-    #[error("Invalid address: {0}")]
-    InvalidAddress(String),
-
     #[error("Network error: {0}")]
     NetworkError(String),
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
-    #[error("Deserialization error: {0}")]
-    DeserializationError(String),
-
     #[error("Configuration error: {0}")]
     ConfigError(String),
-
-    #[error("Parse error: {0}")]
-    ParseError(String),
-
-    #[error("Cryptographic error: {0}")]
-    CryptoError(String),
-
-    #[error("Time error: {0}")]
-    TimeError(String),
-
-    #[error("Validation error: {0}")]
-    ValidationError(String),
 }
 
 impl From<error::RestError> for BlockchainError {
