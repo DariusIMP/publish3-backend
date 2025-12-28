@@ -2,8 +2,9 @@
 use std::sync::Arc;
 
 use actix_web::{App, web::Data};
+use aptos_rest_client::Client as AptosClient;
 use aws_sdk_s3::config::Credentials;
-use redis::Client;
+use privy_rs::PrivyClient;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
@@ -42,12 +43,16 @@ pub async fn create_test_app(
         .await,
     );
 
-    let redis_client = Client::open("redis://localhost:6379").unwrap();
+    let privy_client =
+        Arc::new(PrivyClient::new("app_id".to_string(), "app_secret".to_string()).unwrap());
+    let aptos_client =
+        Arc::new(AptosClient::builder(aptos_rest_client::AptosBaseUrl::Testnet).build());
 
     let app_state = Data::new(AppState {
         sql_client,
-        redis_client,
         s3_client,
+        privy_client,
+        aptos_client,
     });
 
     App::new()
@@ -87,9 +92,11 @@ pub async fn create_test_publication(sql_client: &SqlClient, user_privy_id: Stri
     let new_publication = NewPublication {
         user_id: user_privy_id,
         title: format!("Test Publication {}", Uuid::new_v4()),
-        about: Some("Test publication description".to_string()),
-        tags: Some(vec!["test".to_string(), "research".to_string()]),
-        s3key: None,
+        about: "Test publication description".to_string(),
+        tags: vec!["test".to_string(), "research".to_string()],
+        s3key: "s3://test-bucket/test-key.pdf".to_string(),
+        price: 1000,
+        citation_royalty_bps: 100,
     };
 
     let publication = sql_client

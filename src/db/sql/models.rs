@@ -25,11 +25,15 @@ pub struct Author {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Publication {
     pub id: Uuid,
-    pub user_id: Option<PrivyId>,
+    pub user_id: PrivyId,
     pub title: String,
-    pub about: Option<String>,
+    pub about: String,
     pub tags: Vec<String>,
-    pub s3key: Option<String>,
+    pub s3key: String,
+    pub price: i64,
+    pub citation_royalty_bps: i64,
+    pub status: String,
+    pub transaction_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -39,6 +43,32 @@ pub struct PublicationAuthor {
     pub publication_id: Uuid,
     pub author_id: PrivyId, // Now references authors(privy_id) as VARCHAR
     pub author_order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PublicationAuthorWithDetails {
+    pub publication_id: Uuid,
+    pub author_id: PrivyId,
+    pub author_order: i32,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub author_affiliation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Wallet {
+    pub wallet_id: String,
+    pub wallet_address: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserWallet {
+    pub user_id: String,
+    pub wallet_id: String,
+    pub is_primary: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -67,9 +97,11 @@ pub struct NewAuthor {
 pub struct NewPublication {
     pub user_id: PrivyId,
     pub title: String,
-    pub about: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub s3key: Option<String>,
+    pub about: String,
+    pub tags: Vec<String>,
+    pub s3key: String,
+    pub price: i64,
+    pub citation_royalty_bps: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +109,19 @@ pub struct NewPublicationAuthor {
     pub publication_id: Uuid,
     pub author_id: String,
     pub author_order: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWallet {
+    pub wallet_id: String,
+    pub wallet_address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewUserWallet {
+    pub user_id: String,
+    pub wallet_id: String,
+    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

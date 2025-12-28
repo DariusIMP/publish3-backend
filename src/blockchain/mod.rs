@@ -1,0 +1,291 @@
+pub mod errors;
+pub mod signing;
+
+use aptos_crypto::ed25519::{PublicKey, Signature};
+use aptos_rust_sdk::client::rest_api::AptosFullnodeClient;
+use aptos_rust_sdk_types::api_types::chain_id::ChainId;
+use aptos_rust_sdk_types::api_types::transaction::{
+    GenerateSigningMessage, SignedTransaction, TransactionPayload,
+};
+use aptos_rust_sdk_types::api_types::{
+    module_id::ModuleId,
+    transaction::{EntryFunction, RawTransaction},
+};
+use aptos_rust_sdk_types::state::State;
+use privy_rs::{
+    PrivateKey, PrivyClient,
+    generated::{ResponseValue, types::RawSignResponse},
+};
+use serde_json::Value;
+
+use crate::{CONFIG, common::zresult::ZResult, zerror};
+use aptos_rust_sdk_types::api_types::address::AccountAddress;
+use aptos_rust_sdk_types::api_types::transaction_authenticator::TransactionAuthenticator;
+use bcs;
+use hex;
+use privy_rs::{
+    AuthorizationContext,
+    generated::types::{RawSign, RawSignParams},
+};
+pub use signing::{CapabilitySigner, SignedCapability};
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
+pub struct PublicationData {
+    pub paper_hash: [u8; 32],
+    pub user_wallet: AccountAddress,
+    pub user_wallet_id: String,
+    pub user_wallet_pk: String,
+    pub author_wallets: Vec<AccountAddress>,
+    pub price: u64,
+}
+
+/// Submit a publication to the blockchain using the publish3 Move contract
+pub async fn submit_publication_to_blockchain(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: PublicationData,
+) -> ZResult<(Value, State)> {
+    let capability = generate_capability_for_publication(&data, 600).map_err(|err| {
+        tracing::error!("Failed to generate capability for publication: {}", err);
+        zerror!(err)
+    })?;
+
+    let (value, state) = mint_publish_capability(aptos, privy, &data, &capability)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to mint publish capability: {}", err);
+            zerror!(err)
+        })?;
+
+    tracing::debug!(
+        "Minted publish capability. Value: {}. State: {:?}",
+        value,
+        state
+    );
+
+    Ok(submit_publish_transaction(aptos, privy, &data).await?)
+}
+
+async fn submit_publish_transaction(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: &PublicationData,
+) -> ZResult<(Value, State)> {
+    let sequence_number = find_account_sequence_number(&aptos, data.user_wallet.to_string()).await;
+
+    let chain_id = 250;
+    let module_id = ModuleId::new(
+        AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),
+        "publication_registry".to_string(),
+    );
+
+    let publish_entry_function = EntryFunction::new(
+        module_id,
+        "publish".to_string(),
+        vec![],
+        vec![bcs::to_bytes(&data.author_wallets)?],
+    );
+
+    let expiration_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 600;
+
+    let publish_raw_txn = RawTransaction::new(
+        data.user_wallet,
+        sequence_number,
+        TransactionPayload::EntryFunction(publish_entry_function),
+        100_000,
+        100,
+        expiration_timestamp,
+        ChainId::Other(chain_id),
+    );
+
+    let sign_response = sign_with_privy(privy, &data.user_wallet_id, &publish_raw_txn).await?;
+
+    let publish_authenticator = build_authenticator(&data.user_wallet_pk, sign_response)?;
+    let publish_signed_txn = SignedTransaction::new(publish_raw_txn, publish_authenticator);
+    Ok(aptos
+        .submit_transaction(publish_signed_txn)
+        .await?
+        .into_parts())
+}
+
+/// Generates a [SignedCapability] that allows the user's wallet to sign
+/// the subsequent publication transaction from the smart contract.
+///
+/// Think of the signed capability as a token given to the client, allowing it to interact with
+/// the smart contract.
+fn generate_capability_for_publication(
+    publication_data: &PublicationData,
+    expiration_secs: u64,
+) -> ZResult<SignedCapability> {
+    let capability_signer = CapabilitySigner::from_config(&CONFIG)
+        .map_err(|err| zerror!("Failed to create capability signer: {}", err))?;
+
+    let capability = capability_signer.create_capability(
+        &publication_data.paper_hash,
+        publication_data.price,
+        &publication_data.user_wallet,
+        expiration_secs,
+    )?;
+
+    Ok(capability)
+}
+
+async fn mint_publish_capability(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: &PublicationData,
+    capability: &SignedCapability,
+) -> ZResult<(Value, State)> {
+    let module_id = ModuleId::new(
+        AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),
+        "publication_registry".to_string(),
+    );
+
+    let mint_capability_entry_function = EntryFunction::new(
+        module_id,
+        "mint_publish_capability_with_sig".to_string(),
+        vec![],
+        vec![
+            bcs::to_bytes(&capability.mint_payload.paper_hash)?,
+            bcs::to_bytes(&capability.mint_payload.price)?,
+            bcs::to_bytes(&capability.mint_payload.recipient)?,
+            bcs::to_bytes(&capability.mint_payload.expires_at)?,
+            bcs::to_bytes(&capability.signature.to_bytes().to_vec())?,
+        ],
+    );
+
+    let sequence_number = find_account_sequence_number(&aptos, data.user_wallet.to_string()).await;
+
+    let chain_id = 250;
+    let expiration_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 600;
+
+    let mint_capability_raw_txn = RawTransaction::new(
+        data.user_wallet,
+        sequence_number,
+        TransactionPayload::EntryFunction(mint_capability_entry_function),
+        100_000,
+        100,
+        expiration_timestamp,
+        ChainId::from_u8(chain_id),
+    );
+
+    let sign_response =
+        sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn).await?;
+
+    let mint_authenticator = build_authenticator(&data.user_wallet_pk, sign_response)?;
+
+    let mint_capability_signed_txn =
+        SignedTransaction::new(mint_capability_raw_txn, mint_authenticator);
+
+    tracing::debug!(
+        "Submitting transaction: {:?}",
+        mint_capability_signed_txn.raw_txn()
+    );
+    Ok(aptos
+        .submit_transaction(mint_capability_signed_txn)
+        .await?
+        .into_parts())
+}
+
+
+async fn find_account_sequence_number(aptos: &AptosFullnodeClient, address: String) -> u64 {
+    let resource = aptos
+        .get_account_resources(address)
+        .await
+        .unwrap()
+        .into_inner();
+    let sequence_number = resource
+        .iter()
+        .find(|r| r.type_ == "0x1::account::Account")
+        .unwrap()
+        .data
+        .get("sequence_number")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    sequence_number
+}
+
+fn build_authenticator(
+    public_key_hex: &str,
+    signature: ResponseValue<RawSignResponse>,
+) -> ZResult<TransactionAuthenticator> {
+    tracing::debug!("Building authenticator for public key: {}", public_key_hex);
+    tracing::debug!("Raw signature from Privy: {}", signature.data.signature);
+
+    let mut pk_bytes = hex::decode(public_key_hex.trim_start_matches("0x")).map_err(|err| {
+        tracing::error!("Hex decode error for public key: {}", err);
+        err
+    })?;
+    tracing::debug!("Public key bytes length: {}", pk_bytes.len());
+    match pk_bytes.len() {
+        32 => {} // correct
+        33 if pk_bytes[0] == 0x00 => {
+            pk_bytes.remove(0); // strip leading padding byte
+            tracing::debug!("Stripped leading 0x00 byte from public key");
+        }
+        other => {
+            return Err(zerror!(
+                "Invalid Ed25519 public key length: {} bytes",
+                other
+            ));
+        }
+    }
+    let sig_bytes =
+        hex::decode(signature.data.signature.trim_start_matches("0x")).map_err(|err| {
+            tracing::error!("Hex decode error for signature: {}", err);
+            err
+        })?;
+    tracing::debug!("Signature bytes length: {}", sig_bytes.len());
+    let sig = Signature::try_from(sig_bytes.as_slice()).map_err(|err| {
+        tracing::error!("Error decoding signature: {}", err);
+        err
+    })?;
+    let pk = PublicKey::try_from(pk_bytes.as_slice()).map_err(|err| {
+        tracing::error!("Error decoding public key: {}", err);
+        err
+    })?;
+
+    Ok(TransactionAuthenticator::ed25519(pk, sig))
+}
+
+async fn sign_with_privy(
+    privy: &PrivyClient,
+    wallet_id: &str,
+    raw_txn: &RawTransaction,
+) -> ZResult<ResponseValue<RawSignResponse>> {
+    let signing_message = raw_txn.generate_signing_message().unwrap();
+    // let hash = Sha3_256::digest(signing_message);
+    let message_hex = format!("0x{}", hex::encode(signing_message));
+
+    tracing::debug!("MESSAGE HEX: {}", message_hex.clone());
+    let body = RawSign {
+        params: RawSignParams::Variant0 { hash: message_hex },
+    };
+
+    // let idempotency_key = format!("movement-raw-sign:{}", wallet_id);
+
+    let ctx = AuthorizationContext::new().push(PrivateKey(CONFIG.privy_signer_key.to_owned()));
+
+    Ok(privy
+        .wallets()
+        .raw_sign(wallet_id, &ctx, None, &body)
+        .await
+        .map_err(|e| zerror!("Privy signature failed: {:?}", e))?)
+}
+
+// fn generate_signing_message(raw_txn: &RawTransaction) -> ZResult<String> {
+//     let hash = Sha3_256::digest("APTOS::RawTransaction");
+//     let bytes = bcs::to_bytes(raw_txn).map_err(|e| zerror!("BCS encode failed: {}", e))?;
+//     let mut message = vec![];
+//     message.extend(hash);
+//     // message.extend([0]);
+//     message.extend(bytes);
+//     let hash2 = Sha3_256::digest(message);
+//     let message_hex = format!("0x{}", hex::encode(hash2));
+//     Ok(message_hex)
+// }

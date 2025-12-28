@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
-use crate::db::sql::{SqlClient, models::Publication};
+use crate::db::sql::{CitationOperations, SqlClient, models::Publication};
 
 #[async_trait]
 pub trait PublicationOperations {
@@ -18,6 +18,12 @@ pub trait PublicationOperations {
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
+
+    async fn list_publications_with_authors(
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<(Publication, Vec<super::models::Author>)>, sqlx::Error>;
 
     async fn list_publications_by_user(
         &self,
@@ -61,12 +67,26 @@ pub trait PublicationOperations {
         publication_id: Uuid,
     ) -> Result<Vec<super::models::Author>, sqlx::Error>;
 
+    async fn get_publication_authors_with_details(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::PublicationAuthorWithDetails>, sqlx::Error>;
+
     async fn get_publication_citations(
         &self,
         publication_id: Uuid,
     ) -> Result<Vec<super::models::Citation>, sqlx::Error>;
 
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error>;
+
+    async fn get_citation_count(&self, publication_id: Uuid) -> Result<i64, sqlx::Error>;
+
+    async fn update_publication_transaction_status(
+        &self,
+        publication_id: Uuid,
+        status: &str,
+        transaction_hash: Option<&str>,
+    ) -> Result<PgQueryResult, sqlx::Error>;
 }
 
 #[async_trait]
@@ -77,16 +97,18 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            INSERT INTO publications (user_id, title, about, tags, s3key)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, user_id, title, about, tags, s3key, created_at, updated_at
+            INSERT INTO publications (user_id, title, about, tags, s3key, price, citation_royalty_bps, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING_ONCHAIN')
+            RETURNING id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             "#,
         )
         .bind(&new_publication.user_id)
         .bind(&new_publication.title)
         .bind(&new_publication.about)
-        .bind(new_publication.tags.as_deref().unwrap_or(&[]))
+        .bind(&new_publication.tags)
         .bind(&new_publication.s3key)
+        .bind(new_publication.price)
+        .bind(new_publication.citation_royalty_bps)
         .fetch_one(&self.db)
         .await
     }
@@ -94,7 +116,7 @@ impl PublicationOperations for SqlClient {
     async fn get_publication(&self, publication_id: Uuid) -> Result<Publication, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE id = $1
             "#,
@@ -115,7 +137,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -125,6 +147,52 @@ impl PublicationOperations for SqlClient {
         .bind(offset)
         .fetch_all(&self.db)
         .await
+    }
+
+    async fn list_publications_with_authors(
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<(Publication, Vec<super::models::Author>)>, sqlx::Error> {
+        let page = page.unwrap_or(1);
+        let limit = limit.unwrap_or(20);
+        let offset = (page - 1) * limit;
+
+        let publications = sqlx::query_as::<_, Publication>(
+            r#"
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
+            FROM publications 
+            ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.db)
+        .await?;
+
+        let mut result = Vec::new();
+        for publication in publications {
+            let authors_with_details = self
+                .get_publication_authors_with_details(publication.id)
+                .await?;
+
+            let authors: Vec<super::models::Author> = authors_with_details
+                .into_iter()
+                .map(|author_detail| super::models::Author {
+                    privy_id: author_detail.author_id,
+                    name: author_detail.author_name,
+                    email: author_detail.author_email,
+                    affiliation: author_detail.author_affiliation,
+                    created_at: chrono::Utc::now(), // TODO: refactor this
+                    updated_at: chrono::Utc::now(),
+                })
+                .collect();
+
+            result.push((publication, authors));
+        }
+
+        Ok(result)
     }
 
     async fn list_publications_by_user(
@@ -139,7 +207,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE user_id = $1
             ORDER BY created_at DESC
@@ -166,7 +234,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE title ILIKE $1
             ORDER BY title ASC
@@ -192,7 +260,7 @@ impl PublicationOperations for SqlClient {
 
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT id, user_id, title, about, tags, s3key, created_at, updated_at
+            SELECT id, user_id, title, about, tags, s3key, price, citation_royalty_bps, status, transaction_hash, created_at, updated_at
             FROM publications 
             WHERE $1 = ANY(tags)
             ORDER BY created_at DESC
@@ -263,9 +331,9 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Vec<super::models::Author>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Author>(
             r#"
-            SELECT a.id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
+            SELECT a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
             FROM authors a
-            INNER JOIN publication_authors pa ON a.id = pa.author_id
+            INNER JOIN publication_authors pa ON a.privy_id = pa.author_id
             WHERE pa.publication_id = $1
             ORDER BY pa.author_order ASC
             "#,
@@ -295,7 +363,7 @@ impl PublicationOperations for SqlClient {
     async fn get_cited_by(&self, publication_id: Uuid) -> Result<Vec<Publication>, sqlx::Error> {
         sqlx::query_as::<_, Publication>(
             r#"
-            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.created_at, p.updated_at
+            SELECT p.id, p.user_id, p.title, p.about, p.tags, p.s3key, p.price, p.citation_royalty_bps, p.status, p.transaction_hash, p.created_at, p.updated_at
             FROM publications p
             INNER JOIN citations c ON p.id = c.citing_publication_id
             WHERE c.cited_publication_id = $1
@@ -304,6 +372,56 @@ impl PublicationOperations for SqlClient {
         )
         .bind(publication_id)
         .fetch_all(&self.db)
+        .await
+    }
+
+    async fn get_publication_authors_with_details(
+        &self,
+        publication_id: Uuid,
+    ) -> Result<Vec<super::models::PublicationAuthorWithDetails>, sqlx::Error> {
+        sqlx::query_as::<_, super::models::PublicationAuthorWithDetails>(
+            r#"
+            SELECT 
+                pa.publication_id,
+                pa.author_id,
+                pa.author_order,
+                a.name as author_name,
+                a.email as author_email,
+                a.affiliation as author_affiliation
+            FROM publication_authors pa
+            INNER JOIN authors a ON pa.author_id = a.privy_id
+            WHERE pa.publication_id = $1
+            ORDER BY pa.author_order ASC
+            "#,
+        )
+        .bind(publication_id)
+        .fetch_all(&self.db)
+        .await
+    }
+
+    async fn get_citation_count(&self, publication_id: Uuid) -> Result<i64, sqlx::Error> {
+        self.count_citations_to_publication(publication_id).await
+    }
+
+    async fn update_publication_transaction_status(
+        &self,
+        publication_id: Uuid,
+        status: &str,
+        transaction_hash: Option<&str>,
+    ) -> Result<PgQueryResult, sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE publications SET
+            status = $1,
+            transaction_hash = COALESCE($2, transaction_hash),
+            updated_at = NOW()
+            WHERE id = $3
+            "#,
+        )
+        .bind(status)
+        .bind(transaction_hash)
+        .bind(publication_id)
+        .execute(&self.db)
         .await
     }
 }

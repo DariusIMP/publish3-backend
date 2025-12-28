@@ -16,5 +16,4 @@ CREATE TABLE publication_authors (
 );
 
 CREATE INDEX idx_publication_authors_publication_id ON publication_authors (publication_id);
-
 CREATE INDEX idx_publication_authors_author_id ON publication_authors (author_id);

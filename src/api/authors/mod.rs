@@ -3,11 +3,15 @@ use actix_web::{
     error::{ErrorConflict, ErrorInternalServerError, ErrorNotFound},
     get, post, put, web,
 };
+use privy_rs::generated::types::*;
 use serde::Deserialize;
 
 use crate::{
     AppState,
-    db::sql::{AuthorOperations, PrivyId, models::NewAuthor},
+    db::sql::{
+        AuthorOperations, PrivyId, WalletOperations,
+        models::{NewAuthor, NewUserWallet, NewWallet},
+    },
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -34,6 +38,12 @@ async fn create_author(
     request: web::Json<CreateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    // Check if author with this privy_id already exists
+    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
+    if author_by_privy_id.is_ok() {
+        return Err(ErrorConflict("Author with that privy_id already exists"));
+    }
+
     if let Some(email) = &request.email {
         let email_exists = data
             .sql_client
@@ -46,11 +56,53 @@ async fn create_author(
         }
     }
 
-    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
-    if author_by_privy_id.is_ok() {
-        return Err(ErrorConflict("Author with that privy_id already exists"));
-    }
+    let privy = data.privy_client.clone();
+    let wallet = privy
+        .wallets()
+        .create(
+            Some(&request.privy_id),
+            &CreateWalletBody {
+                chain_type: WalletChainType::Movement,
+                owner_id: Some(OwnerIdInput("fh46bvza57oyppddqozmf627".to_string())),
+                owner: None,
+                policy_ids: vec![],
+                additional_signers: None,
+            },
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to create author wallet: {}", err);
+            ErrorInternalServerError("Failed to create wallet for author.")
+        })?;
 
+    let new_wallet = NewWallet {
+        wallet_id: wallet.id.clone(),
+        wallet_address: wallet.address.clone(),
+    };
+
+    data.sql_client
+        .create_wallet(&new_wallet)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error creating wallet: {}", err);
+            ErrorInternalServerError("Failed to create wallet")
+        })?;
+
+    let new_user_wallet = NewUserWallet {
+        user_id: request.privy_id.clone(),
+        wallet_id: wallet.id.clone(),
+        is_primary: true,
+    };
+
+    data.sql_client
+        .create_user_wallet(&new_user_wallet)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error creating user_wallet association: {}", err);
+            ErrorInternalServerError("Failed to associate wallet with user")
+        })?;
+
+    // Create author
     let new_author = NewAuthor {
         privy_id: request.privy_id.clone(),
         name: request.name.clone(),

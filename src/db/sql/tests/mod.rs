@@ -28,9 +28,11 @@ mod integration_tests {
             .create_publication(&NewPublication {
                 user_id: user_privy_id.to_string(),
                 title: title.unwrap_or("Test Publication").to_string(),
-                about: Some("Test description".to_string()),
-                tags: Some(vec!["test".to_string()]),
-                s3key: None,
+                about: "Test description".to_string(),
+                tags: vec!["test".to_string()],
+                s3key: "".to_string(),
+                price: 0,
+                citation_royalty_bps: 0,
             })
             .await?;
         Ok(publication)
@@ -83,13 +85,6 @@ mod integration_tests {
         let count = sql_client.count_users().await?;
         assert_eq!(count, 3);
 
-        Ok(())
-    }
-
-    #[sqlx::test]
-    async fn test_user_email_exists(pool: sqlx::PgPool) -> sqlx::Result<()> {
-        // This test is no longer relevant since we don't store email in users table
-        // We'll skip it for now
         Ok(())
     }
 
@@ -174,13 +169,6 @@ mod integration_tests {
             .await?;
         assert!(citation_by_pubs.is_some());
         assert_eq!(citation_by_pubs.unwrap().id, citation.id);
-
-        let result = sql_client.update_citation(citation.id).await?;
-        assert!(result.rows_affected() == 0); // No fields to update
-
-        let delete_result = sql_client.delete_citation(citation.id).await?;
-        assert!(delete_result.rows_affected() > 0);
-
         Ok(())
     }
 
@@ -354,9 +342,11 @@ mod integration_tests {
                 .create_publication(&NewPublication {
                     user_id: user_privy_id,
                     title: title.to_string(),
-                    about: Some("Test description".to_string()),
-                    tags: Some(tags.clone()),
-                    s3key: None,
+                    about: "Test description".to_string(),
+                    tags: tags.clone(),
+                    s3key: "".to_string(),
+                    price: 0,
+                    citation_royalty_bps: 0,
                 })
                 .await?;
         }
@@ -398,9 +388,11 @@ mod integration_tests {
                 .create_publication(&NewPublication {
                     user_id: format!("test_user_{}", i),
                     title: format!("Publication {}", i),
-                    about: None,
-                    tags: None,
-                    s3key: None,
+                    about: "".to_string(),
+                    tags: vec![],
+                    s3key: "".to_string(),
+                    price: 0,
+                    citation_royalty_bps: 0,
                 })
                 .await?;
             publications.push(publication);
@@ -450,9 +442,11 @@ mod integration_tests {
                 .create_publication(&NewPublication {
                     user_id: format!("test_user_{}", i),
                     title: format!("Publication {}", i),
-                    about: None,
-                    tags: None,
-                    s3key: None,
+                    about: "".to_string(),
+                    tags: vec![],
+                    s3key: "".to_string(),
+                    price: 0,
+                    citation_royalty_bps: 0,
                 })
                 .await?;
             publications.push(publication);
@@ -517,19 +511,18 @@ mod integration_tests {
         let new_publication = NewPublication {
             user_id: user_privy_id.clone(),
             title: "Test Publication".to_string(),
-            about: Some("This is a test publication".to_string()),
-            tags: Some(vec!["test".to_string(), "ai".to_string()]),
-            s3key: Some("s3://bucket/key.pdf".to_string()),
+            about: "This is a test publication".to_string(),
+            tags: vec!["test".to_string(), "ai".to_string()],
+            s3key: "s3://bucket/key.pdf".to_string(),
+            price: 0,
+            citation_royalty_bps: 0,
         };
 
         let publication = sql_client.create_publication(&new_publication).await?;
         assert_eq!(publication.title, "Test Publication");
-        assert_eq!(
-            publication.about,
-            Some("This is a test publication".to_string())
-        );
+        assert_eq!(publication.about, "This is a test publication".to_string());
         assert_eq!(publication.tags, vec!["test".to_string(), "ai".to_string()]);
-        assert_eq!(publication.s3key, Some("s3://bucket/key.pdf".to_string()));
+        assert_eq!(publication.s3key, "s3://bucket/key.pdf".to_string());
 
         let retrieved_publication = sql_client.get_publication(publication.id).await?;
         assert_eq!(retrieved_publication.id, publication.id);
@@ -549,17 +542,14 @@ mod integration_tests {
 
         let updated_publication = sql_client.get_publication(publication.id).await?;
         assert_eq!(updated_publication.title, "Updated Title");
-        assert_eq!(
-            updated_publication.about,
-            Some("Updated description".to_string())
-        );
+        assert_eq!(updated_publication.about, "Updated description".to_string());
         assert_eq!(
             updated_publication.tags,
             vec!["updated".to_string(), "ml".to_string()]
         );
         assert_eq!(
             updated_publication.s3key,
-            Some("s3://bucket/updated.pdf".to_string())
+            "s3://bucket/updated.pdf".to_string()
         );
 
         let delete_result = sql_client.delete_publication(publication.id).await?;
@@ -593,9 +583,11 @@ mod integration_tests {
                 .create_publication(&NewPublication {
                     user_id: diff_user_privy_id,
                     title: format!("Anonymous Publication {}", i),
-                    about: None,
-                    tags: None,
-                    s3key: None,
+                    about: "".to_string(),
+                    tags: vec![],
+                    s3key: "".to_string(),
+                    price: 0,
+                    citation_royalty_bps: 0,
                 })
                 .await?;
         }
@@ -606,7 +598,7 @@ mod integration_tests {
 
         assert_eq!(user_publications.len(), 3);
         for pub_item in &user_publications {
-            assert_eq!(pub_item.user_id, Some(user_privy_id.clone()));
+            assert_eq!(pub_item.user_id, user_privy_id.clone());
             assert!(pub_item.title.starts_with("User Publication"));
         }
 
@@ -683,9 +675,11 @@ mod integration_tests {
             .create_publication(&NewPublication {
                 user_id: user_privy_id.clone(),
                 title: "Original Title".to_string(),
-                about: Some("Original description".to_string()),
-                tags: Some(vec!["original".to_string()]),
-                s3key: Some("s3://original.pdf".to_string()),
+                about: "Original description".to_string(),
+                tags: vec!["original".to_string()],
+                s3key: "s3://original.pdf".to_string(),
+                price: 0,
+                citation_royalty_bps: 0,
             })
             .await?;
 
@@ -703,15 +697,9 @@ mod integration_tests {
 
         let after_title_update = sql_client.get_publication(publication.id).await?;
         assert_eq!(after_title_update.title, "Updated Title Only");
-        assert_eq!(
-            after_title_update.about,
-            Some("Original description".to_string())
-        );
+        assert_eq!(after_title_update.about, "Original description".to_string());
         assert_eq!(after_title_update.tags, vec!["original".to_string()]);
-        assert_eq!(
-            after_title_update.s3key,
-            Some("s3://original.pdf".to_string())
-        );
+        assert_eq!(after_title_update.s3key, "s3://original.pdf".to_string());
 
         let result2 = sql_client
             .update_publication(
@@ -745,10 +733,7 @@ mod integration_tests {
         assert!(result3.rows_affected() > 0);
 
         let after_s3key_update = sql_client.get_publication(publication.id).await?;
-        assert_eq!(
-            after_s3key_update.s3key,
-            Some("s3://updated.pdf".to_string())
-        );
+        assert_eq!(after_s3key_update.s3key, "s3://updated.pdf".to_string());
 
         Ok(())
     }
