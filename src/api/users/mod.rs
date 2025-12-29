@@ -1,3 +1,5 @@
+pub mod wallets;
+
 use actix_web::{
     HttpRequest, HttpResponse, delete,
     error::{ErrorConflict, ErrorInternalServerError, ErrorNotFound},
@@ -6,6 +8,7 @@ use actix_web::{
 
 use crate::{
     AppState,
+    api::users::wallets::create_user_wallet,
     db::sql::{AuthorOperations, PrivyId, UserOperations, models::NewUser},
 };
 
@@ -45,6 +48,13 @@ async fn create_user(
         .map_err(|err| {
             tracing::error!("Error creating user: {}", err);
             ErrorInternalServerError("Internal server error")
+        })?;
+
+    create_user_wallet(&data, body.privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error creating wallet for user {}: {:?}", body.privy_id, err);
+            ErrorInternalServerError("Failed to create wallet")
         })?;
 
     Ok(HttpResponse::Ok().json(user))
@@ -172,6 +182,14 @@ async fn sign_in(
                 .map_err(|err| {
                     tracing::error!("Error creating user: {}", err);
                     ErrorInternalServerError("Failed to create user")
+                })?;
+
+            // Create wallet for the new user
+            create_user_wallet(&data, privy_id.clone())
+                .await
+                .map_err(|err| {
+                    tracing::error!("Error creating wallet for user {}: {:?}", privy_id, err);
+                    ErrorInternalServerError("Failed to create wallet")
                 })?;
 
             let response = serde_json::json!({

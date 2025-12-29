@@ -30,6 +30,7 @@ pub struct Config {
     pub privy_app_secret: String,
     pub privy_jwt_verification_key: Vec<u8>,
     pub privy_signer_key: String,
+    pub privy_wallet_auth: String,
 
     // Backend signing key for capabilities
     pub backend_private_key: String,
@@ -65,6 +66,7 @@ impl Config {
             .to_vec();
         let privy_signer_key =
             privy_der_base64_to_sec1_pem(get_env_var("PRIVY_SIGNER_KEY")).unwrap();
+        let privy_wallet_auth = get_env_var("PRIVY_WALLET_AUTH");
 
         // Backend signing key for capabilities
         let backend_private_key = get_env_var("BACKEND_PRIVATE_KEY");
@@ -88,6 +90,7 @@ impl Config {
             privy_app_secret,
             privy_jwt_verification_key,
             privy_signer_key,
+            privy_wallet_auth,
             backend_private_key,
             backend_public_key,
         }
