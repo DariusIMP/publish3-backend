@@ -136,8 +136,6 @@ pub struct Purchase {
     pub id: Uuid,
     pub user_id: String,
     pub publication_id: Uuid,
-    pub amount: i64,
-    pub currency: String,
     pub status: String,
     pub transaction_hash: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -148,8 +146,6 @@ pub struct Purchase {
 pub struct NewPurchase {
     pub user_id: String,
     pub publication_id: Uuid,
-    pub amount: i64,
-    pub currency: Option<String>,
     pub status: Option<String>,
     pub transaction_hash: Option<String>,
 }
