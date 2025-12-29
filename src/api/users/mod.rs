@@ -9,7 +9,7 @@ use actix_web::{
 use crate::{
     AppState,
     api::users::wallets::create_user_wallet,
-    db::sql::{AuthorOperations, PrivyId, UserOperations, models::NewUser},
+    db::sql::{AuthorOperations, PrivyId, UserOperations, WalletOperations, models::NewUser},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -18,7 +18,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_user)
         .service(delete_user)
         .service(list_users)
-        .service(sign_in);
+        .service(sign_in)
+        .service(get_user_wallet);
     conf.service(scope);
 }
 
@@ -53,7 +54,11 @@ async fn create_user(
     create_user_wallet(&data, body.privy_id.clone())
         .await
         .map_err(|err| {
-            tracing::error!("Error creating wallet for user {}: {:?}", body.privy_id, err);
+            tracing::error!(
+                "Error creating wallet for user {}: {:?}",
+                body.privy_id,
+                err
+            );
             ErrorInternalServerError("Failed to create wallet")
         })?;
 
@@ -203,4 +208,26 @@ async fn sign_in(
             Err(ErrorInternalServerError("Internal server error"))
         }
     }
+}
+
+#[get("/{privy_id}/wallet")]
+async fn get_user_wallet(
+    privy_id: web::Path<PrivyId>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let wallet = data
+        .sql_client
+        .get_primary_wallet(&privy_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving user wallet: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Wallet not found for user"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "wallet_address": wallet.wallet_address,
+    })))
 }
