@@ -1,12 +1,13 @@
 use crate::{
     AppState,
+    blockchain::purchases::{PurchaseData, submit_purchase_to_blockchain},
     blockchain::{PublicationData, submit_publication_to_blockchain},
     common::zresult::ZResult,
     db::{
         s3::S3Key,
         sql::{
             CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations,
-            SqlClient, WalletOperations, models::NewPublication,
+            PurchaseOperations, SqlClient, WalletOperations, models::NewPublication,
         },
     },
     zerror,
@@ -41,7 +42,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_publication_citations)
         .service(get_cited_by)
         .service(get_publication_pdf_url)
-        .service(update_publication_transaction_status);
+        .service(update_publication_transaction_status)
+        .service(purchase_publication);
     conf.service(scope);
 }
 
@@ -658,6 +660,128 @@ async fn update_publication_transaction_status(
     })))
 }
 
+#[post("/{publication_id}/purchase")]
+async fn purchase_publication(
+    req: actix_web::HttpRequest,
+    publication_id: web::Path<Uuid>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+
+    // Get publication details
+    let publication = data
+        .sql_client
+        .get_publication(*publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    // Check if user already purchased this publication
+    let already_purchased = data
+        .sql_client
+        .has_user_purchased_publication(&user_id, *publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error checking purchase status: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    if already_purchased {
+        return Err(ErrorBadRequest(
+            "You have already purchased this publication",
+        ));
+    }
+
+    // Get buyer's wallet
+    let buyer_wallet = data
+        .sql_client
+        .get_primary_wallet(&user_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving user wallet: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    // Get buyer's wallet public key from Privy
+    let buyer_wallet_pk = data
+        .privy_client
+        .wallets()
+        .get(&buyer_wallet.wallet_id)
+        .await
+        .map(|wallet| wallet.public_key.clone())
+        .map_err(|err| {
+            tracing::error!("Failed to get wallet from Privy: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?
+        .ok_or_else(|| {
+            tracing::error!("Wallet lacks public key");
+            ErrorInternalServerError("Wallet lacks public key")
+        })?;
+
+    let buyer_wallet_address =
+        AccountAddress::from_str(&buyer_wallet.wallet_address).map_err(|err| {
+            tracing::error!("Error parsing wallet address: {}", err);
+            ErrorInternalServerError("Invalid wallet address")
+        })?;
+
+    let purchase_data = PurchaseData {
+        buyer_wallet: buyer_wallet_address,
+        buyer_wallet_id: buyer_wallet.wallet_id.clone(),
+        buyer_wallet_pk,
+        paper_id: publication.id.as_u128() as u64, // TODO: map publication UUID to on-chain paper ID
+    };
+
+    // Submit purchase to blockchain
+    let (value, _state) =
+        submit_purchase_to_blockchain(&data.aptos_client, &data.privy_client, purchase_data)
+            .await
+            .map_err(|err| {
+                tracing::error!("Failed to submit purchase to blockchain: {}", err);
+                ErrorInternalServerError("Blockchain transaction failed")
+            })?;
+
+    let transaction_hash = value
+        .get("hash")
+        .and_then(|h| h.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            tracing::error!("Transaction response missing hash");
+            ErrorInternalServerError("Transaction response missing hash")
+        })?;
+
+    // Record purchase in database
+    let new_purchase = crate::db::sql::models::NewPurchase {
+        user_id: user_id.clone(),
+        publication_id: *publication_id,
+        status: Some("PAID".to_string()),
+        transaction_hash: Some(transaction_hash.clone()),
+    };
+
+    data.sql_client
+        .create_purchase(&new_purchase)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to record purchase in database: {}", err);
+            ErrorInternalServerError("Failed to record purchase")
+        })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "message": "Purchase completed successfully",
+        "transaction_hash": transaction_hash,
+        "publication_id": *publication_id,
+    })))
+}
+
 #[derive(Serialize)]
 struct PublicationResponse {
     id: Uuid,
@@ -676,9 +800,10 @@ async fn handle_publication(
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
-    let publication_data = prepare_blockchain_transaction(&data, &user_id, &authors, &form)
-        .await
-        .map_err(|err| zerror!(err))?;
+    let publication_data =
+        prepare_blockchain_transaction(&data, &user_id, publication.id, &authors, &form)
+            .await
+            .map_err(|err| zerror!(err))?;
 
     let response =
         submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
@@ -725,6 +850,7 @@ async fn handle_publication(
 async fn prepare_blockchain_transaction(
     data: &AppState,
     user_id: &String,
+    publication_id: Uuid,
     authors: &Vec<String>,
     form: &CreatePublicationForm,
 ) -> ZResult<PublicationData> {
@@ -761,16 +887,17 @@ async fn prepare_blockchain_transaction(
     let paper_hash =
         hash_file_sha3_256(&form.file).map_err(|err| zerror!("Failed to hash file: {}", err))?;
 
-    let publication_data = PublicationData {
+    let paper_uid_hash = Sha3_256::digest(publication_id.as_bytes()).into();
+
+    Ok(PublicationData {
+        paper_uid_hash,
         paper_hash,
         user_wallet: user_wallet_account,
         user_wallet_id: (&user_wallet.wallet_id).clone(),
         user_wallet_pk,
         author_wallets: authors_wallets_accounts,
         price: form.price.0 as u64,
-    };
-
-    Ok(publication_data)
+    })
 }
 
 fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {

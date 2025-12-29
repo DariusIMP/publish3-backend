@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
+    blockchain::CapabilitySigner,
     config::Config,
     db::{
         s3::{S3Bucket, client::S3Client},
@@ -37,6 +38,8 @@ pub struct AppState {
 
 lazy_static! {
     pub static ref CONFIG: Config = Config::init();
+    pub static ref CAPABILITY_SIGNER: CapabilitySigner =
+        CapabilitySigner::from_config(&CONFIG).unwrap();
 }
 
 #[actix_web::main]

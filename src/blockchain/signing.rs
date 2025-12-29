@@ -2,6 +2,7 @@ use aptos_crypto::ed25519::{PrivateKey, Signature};
 use aptos_crypto_derive::{BCSCryptoHash, CryptoHasher};
 use aptos_rust_sdk_types::api_types::address::AccountAddress;
 use base64::{Engine, engine::general_purpose};
+use sha3::{Digest, Sha3_256};
 
 use crate::config::Config;
 
@@ -17,6 +18,7 @@ pub struct SignedCapability {
 /// MintPayload as defined in the Move contract
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, CryptoHasher, BCSCryptoHash)]
 pub struct MintPayload {
+    pub paper_uid_hash: Vec<u8>,
     pub paper_hash: Vec<u8>,
     pub price: u64,
     pub recipient: AccountAddress,
@@ -47,6 +49,7 @@ impl CapabilitySigner {
 
     pub fn create_capability(
         &self,
+        paper_uid_hash: &[u8],
         paper_hash: &[u8],
         price: u64,
         recipient: &AccountAddress,
@@ -59,6 +62,7 @@ impl CapabilitySigner {
             + expires_in_seconds;
 
         let payload = MintPayload {
+            paper_uid_hash: paper_uid_hash.to_vec(),
             paper_hash: paper_hash.to_vec(),
             price,
             recipient: *recipient,
@@ -67,8 +71,9 @@ impl CapabilitySigner {
 
         let payload_bytes = aptos_bcs::to_bytes(&payload)
             .map_err(|e| BlockchainError::ConfigError(e.to_string()))?;
+        let payload_hash = Sha3_256::digest(&payload_bytes);
 
-        let signature = self.private_key.sign_message(&payload_bytes);
+        let signature = self.private_key.sign_message(&payload_hash);
         tracing::debug!(
             "Generated signature (hex): {}",
             hex::encode(signature.to_bytes())
