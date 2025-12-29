@@ -737,7 +737,7 @@ async fn purchase_publication(
         buyer_wallet: buyer_wallet_address,
         buyer_wallet_id: buyer_wallet.wallet_id.clone(),
         buyer_wallet_pk,
-        paper_id: publication.id.as_u128() as u64, // TODO: map publication UUID to on-chain paper ID
+        paper_id: publication.id,
     };
 
     // Submit purchase to blockchain
