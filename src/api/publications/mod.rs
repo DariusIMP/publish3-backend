@@ -83,9 +83,18 @@ async fn create_publication(
 
 #[get("/{publication_id}")]
 async fn get_publication(
+    req: actix_web::HttpRequest,
     publication_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+
+    check_publication_access(&data, &user_id, *publication_id).await?;
+
     let publication = data
         .sql_client
         .get_publication(*publication_id)
@@ -505,12 +514,20 @@ async fn get_cited_by(
     Ok(HttpResponse::Ok().json(cited_by))
 }
 
-// TODO: remove endpoint
 #[get("/{publication_id}/pdf-url")]
 async fn get_publication_pdf_url(
+    req: actix_web::HttpRequest,
     publication_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+
+    check_publication_access(&data, &user_id, *publication_id).await?;
+
     let publication = data
         .sql_client
         .get_publication(*publication_id)
@@ -542,6 +559,63 @@ async fn get_publication_pdf_url(
         "pdf_url": pdf_url,
         "expires_in": "5 minutes" // Presigned URL expires in 5 minutes
     })))
+}
+
+/// Helper function to check if a user has access to a publication
+/// Returns Ok(()) if user has access, Err(actix_web::Error) if not
+async fn check_publication_access(
+    data: &AppState,
+    user_id: &str,
+    publication_id: Uuid,
+) -> Result<(), actix_web::Error> {
+    let publication = data
+        .sql_client
+        .get_publication(publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => ErrorNotFound("Publication not found"),
+                _ => ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    // Check if user is the author
+    let is_author = publication.user_id == user_id;
+
+    // Get authors with details to check if user is a co-author
+    let authors_with_details = data
+        .sql_client
+        .get_publication_authors_with_details(publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication authors: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    // Check if user is one of the authors (from publication_authors table)
+    let is_coauthor = authors_with_details
+        .iter()
+        .any(|author_detail| author_detail.author_id == user_id);
+
+    // Check if user has purchased this publication
+    let has_purchased = data
+        .sql_client
+        .has_user_purchased_publication(user_id, publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error checking purchase status: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    // User must be either author/coauthor or have purchased the publication
+    if !is_author && !is_coauthor && !has_purchased {
+        return Err(actix_web::error::ErrorForbidden(
+            "You do not have access to this publication. Please purchase it first.",
+        ));
+    }
+
+    Ok(())
 }
 
 /// Helper function to process citations for a publication
