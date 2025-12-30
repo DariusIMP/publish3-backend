@@ -42,6 +42,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_publication_citations)
         .service(get_cited_by)
         .service(get_publication_pdf_url)
+        .service(check_publication_access_endpoint)
         .service(update_publication_transaction_status)
         .service(purchase_publication);
     conf.service(scope);
@@ -558,6 +559,28 @@ async fn get_publication_pdf_url(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "pdf_url": pdf_url,
         "expires_in": "5 minutes" // Presigned URL expires in 5 minutes
+    })))
+}
+
+#[get("/{publication_id}/access")]
+async fn check_publication_access_endpoint(
+    req: actix_web::HttpRequest,
+    publication_id: web::Path<Uuid>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let user_id = claims.sub;
+
+    let has_access = check_publication_access(&data, &user_id, *publication_id)
+        .await
+        .map_or_else(|_| false, |_| true);
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "has_access": has_access,
+        "publication_id": *publication_id,
     })))
 }
 
