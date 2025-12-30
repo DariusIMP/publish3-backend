@@ -186,7 +186,7 @@ async fn list_authors(
 ) -> Result<HttpResponse, actix_web::Error> {
     let authors = data
         .sql_client
-        .list_authors(query.page, query.limit)
+        .list_authors_with_publications(query.page, query.limit)
         .await
         .map_err(|err| {
             tracing::error!("Error listing authors: {}", err);

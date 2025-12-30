@@ -1,7 +1,20 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgQueryResult;
+use sqlx::FromRow;
 
 use crate::db::sql::{PrivyId, SqlClient, models::Author};
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AuthorWithPublications {
+    pub privy_id: PrivyId,
+    pub name: String,
+    pub email: Option<String>,
+    pub affiliation: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub publications_count: i64,
+}
 
 #[async_trait]
 pub trait AuthorOperations {
@@ -19,6 +32,12 @@ pub trait AuthorOperations {
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Author>, sqlx::Error>;
+
+    async fn list_authors_with_publications(
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<AuthorWithPublications>, sqlx::Error>;
 
     async fn search_authors_by_name(
         &self,
@@ -103,6 +122,40 @@ impl AuthorOperations for SqlClient {
             SELECT privy_id, name, email, affiliation, created_at, updated_at
             FROM authors 
             ORDER BY name ASC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.db)
+        .await
+    }
+
+    async fn list_authors_with_publications(
+        &self,
+        page: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<AuthorWithPublications>, sqlx::Error> {
+        let page = page.unwrap_or(1);
+        let limit = limit.unwrap_or(20);
+        let offset = (page - 1) * limit;
+
+        sqlx::query_as::<_, AuthorWithPublications>(
+            r#"
+            SELECT 
+                a.privy_id, 
+                a.name, 
+                a.email, 
+                a.affiliation, 
+                a.created_at, 
+                a.updated_at,
+                COALESCE((
+                    SELECT COUNT(*) 
+                    FROM publication_authors pa 
+                    WHERE pa.author_id = a.privy_id
+                ), 0) as publications_count
+            FROM authors a
+            ORDER BY publications_count DESC, a.name ASC
             LIMIT $1 OFFSET $2
             "#,
         )
