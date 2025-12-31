@@ -20,7 +20,8 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(get_author)
         .service(update_author)
         .service(delete_author)
-        .service(search_authors);
+        .service(search_authors)
+        .service(get_author_stats);
     conf.service(scope);
 }
 
@@ -234,4 +235,56 @@ struct SearchAuthorsQuery {
     name: String,
     page: Option<i64>,
     limit: Option<i64>,
+}
+
+#[get("/{privy_id}/stats")]
+async fn get_author_stats(
+    privy_id: web::Path<PrivyId>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    // Check if author exists
+    let _author = data.sql_client.get_author(&privy_id).await.map_err(|err| {
+        tracing::error!("Error retrieving author: {}", err);
+        match err {
+            sqlx::Error::RowNotFound => ErrorNotFound("Author not found"),
+            _ => ErrorInternalServerError("Internal server error"),
+        }
+    })?;
+
+    // Get publication count
+    let publication_count = data
+        .sql_client
+        .get_author_publication_count(&privy_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error getting author publication count: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    // Get purchase count
+    let purchase_count = data
+        .sql_client
+        .get_author_purchase_count(&privy_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error getting author purchase count: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    // Get revenue
+    let revenue = data
+        .sql_client
+        .get_author_revenue(&privy_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error getting author revenue: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "publication_count": publication_count,
+        "purchase_count": purchase_count,
+        "revenue": revenue,
+        "privy_id": privy_id.to_string(),
+    })))
 }

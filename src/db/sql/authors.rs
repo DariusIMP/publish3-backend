@@ -59,6 +59,12 @@ pub trait AuthorOperations {
     async fn author_email_exists(&self, email: &str) -> Result<bool, sqlx::Error>;
 
     async fn count_authors(&self) -> Result<i64, sqlx::Error>;
+
+    async fn get_author_publication_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+
+    async fn get_author_purchase_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+
+    async fn get_author_revenue(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
 }
 
 #[async_trait]
@@ -235,5 +241,48 @@ impl AuthorOperations for SqlClient {
         sqlx::query_scalar("SELECT COUNT(*) FROM authors")
             .fetch_one(&self.db)
             .await
+    }
+
+    async fn get_author_publication_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) 
+            FROM publication_authors 
+            WHERE author_id = $1
+            "#,
+        )
+        .bind(privy_id)
+        .fetch_one(&self.db)
+        .await
+    }
+
+    async fn get_author_purchase_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(DISTINCT p.id)
+            FROM purchases p
+            INNER JOIN publications pub ON p.publication_id = pub.id
+            INNER JOIN publication_authors pa ON pub.id = pa.publication_id
+            WHERE pa.author_id = $1
+            "#,
+        )
+        .bind(privy_id)
+        .fetch_one(&self.db)
+        .await
+    }
+
+    async fn get_author_revenue(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(SUM(pub.price)::BIGINT, 0)
+            FROM purchases p
+            INNER JOIN publications pub ON p.publication_id = pub.id
+            INNER JOIN publication_authors pa ON pub.id = pa.publication_id
+            WHERE pa.author_id = $1
+            "#,
+        )
+        .bind(privy_id)
+        .fetch_one(&self.db)
+        .await
     }
 }
