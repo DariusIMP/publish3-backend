@@ -12,11 +12,9 @@ use actix_cors::Cors;
 use actix_web::{App, HttpServer, http::header, middleware, web};
 use aptos_rust_sdk::client::config::AptosNetwork;
 use aptos_rust_sdk::client::{builder::AptosClientBuilder, rest_api::AptosFullnodeClient};
-use aws_sdk_s3::config::Credentials;
 use dotenv::dotenv;
 use lazy_static::lazy_static;
 use privy_rs::PrivyClient;
-use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -80,28 +78,7 @@ async fn main() -> std::io::Result<()> {
 
     let sql_client = Arc::new(SqlClient::new(pool).await);
 
-    // Todo, fix or remove
-    let _ = match Client::open(CONFIG.redis_url.to_owned()) {
-        Ok(client) => {
-            println!("✅Connection to the redis is successful!");
-            client
-        }
-        Err(e) => {
-            println!("🔥 Error connecting to Redis: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let s3_credentials = Credentials::new(
-        CONFIG.s3_access_key.to_owned(),
-        CONFIG.s3_secret_key.to_owned(),
-        None,
-        None,
-        "Publish3",
-    );
-
-    let s3_client =
-        Arc::new(S3Client::new(s3_credentials, None, Some(CONFIG.s3_endpoint.to_owned())).await);
+    let s3_client = create_s3_client().await;
 
     s3_client
         .create_bucket(S3Bucket::Storage, true)
@@ -138,4 +115,22 @@ async fn main() -> std::io::Result<()> {
     .bind("0.0.0.0:8080")?
     .run()
     .await
+}
+
+#[cfg(not(feature = "aws-s3"))]
+async fn create_s3_client() -> Arc<S3Client> {
+    use aws_sdk_s3::config::Credentials;
+    let s3_credentials = Credentials::new(
+        CONFIG.s3_access_key.to_owned(),
+        CONFIG.s3_secret_key.to_owned(),
+        None,
+        None,
+        "Publish3",
+    );
+    Arc::new(S3Client::new(s3_credentials, None, Some(CONFIG.s3_endpoint.to_owned())).await)
+}
+
+#[cfg(feature = "aws-s3")]
+async fn create_s3_client() -> Arc<S3Client> {
+    Arc::new(S3Client::new_from_env().await)
 }

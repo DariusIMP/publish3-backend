@@ -8,7 +8,6 @@ use p256::pkcs8::DecodePrivateKey;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    pub redis_url: String,
     pub client_origin: String,
 
     pub server_address: String,
@@ -40,7 +39,6 @@ pub struct Config {
 impl Config {
     pub fn init() -> Config {
         let database_url = get_env_var("DATABASE_URL");
-        let redis_url = get_env_var("REDIS_URL");
         let client_origin = get_env_var("CLIENT_ORIGIN");
 
         let server_address = get_env_var("SERVER_ADDRESS");
@@ -74,7 +72,6 @@ impl Config {
 
         Config {
             database_url,
-            redis_url,
             client_origin,
             server_address,
             server_port,

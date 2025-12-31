@@ -1,12 +1,8 @@
 use actix_multipart::form::tempfile::TempFile;
-use aws_config::Region;
+use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{
-    Client,
-    config::Credentials,
-    operation::create_bucket::CreateBucketOutput,
-    presigning::PresigningConfig,
-    primitives::ByteStream,
-    types::{BucketLocationConstraint, CreateBucketConfiguration},
+    Client, config::Credentials, operation::create_bucket::CreateBucketOutput,
+    presigning::PresigningConfig, primitives::ByteStream,
 };
 use base64::{Engine, engine::general_purpose};
 use std::{path::PathBuf, time::Duration};
@@ -19,10 +15,15 @@ use crate::{
 #[derive(Clone)]
 pub struct S3Client {
     client: Client,
-    region: Option<String>,
 }
 
 impl S3Client {
+    pub async fn new_from_env() -> Self {
+        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let client = aws_sdk_s3::Client::new(&config);
+        S3Client { client }
+    }
+
     pub async fn new(
         credentials: Credentials,
         region: Option<String>,
@@ -48,7 +49,7 @@ impl S3Client {
 
         let client = Client::from_conf(config.build());
 
-        S3Client { client, region }
+        S3Client { client }
     }
 
     pub async fn store_file(&self, file: &TempFile, path: Option<PathBuf>) -> ZResult<()> {
@@ -127,17 +128,9 @@ impl S3Client {
         bucket: S3Bucket,
         reuse_bucket: bool,
     ) -> ZResult<Option<CreateBucketOutput>> {
-        let constraint = self
-            .region
-            .as_ref()
-            .map(|region| BucketLocationConstraint::from(region.as_str()));
-        let cfg = CreateBucketConfiguration::builder()
-            .set_location_constraint(constraint)
-            .build();
         let result = self
             .client
             .create_bucket()
-            .create_bucket_configuration(cfg)
             .bucket(bucket.as_str())
             .send()
             .await;
