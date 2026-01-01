@@ -31,7 +31,6 @@ pub struct Publication {
     pub tags: Vec<String>,
     pub s3key: String,
     pub price: i64,
-    pub citation_royalty_bps: i64,
     pub status: String,
     pub transaction_hash: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -101,7 +100,6 @@ pub struct NewPublication {
     pub tags: Vec<String>,
     pub s3key: String,
     pub price: i64,
-    pub citation_royalty_bps: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

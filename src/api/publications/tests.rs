@@ -77,14 +77,6 @@ mod tests {
         body.extend_from_slice(b"0");
         body.extend_from_slice(b"\r\n");
 
-        // Add citation_royalty_bps field (required, default 0)
-        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-        body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"citation_royalty_bps\"\r\n\r\n",
-        );
-        body.extend_from_slice(b"0");
-        body.extend_from_slice(b"\r\n");
-
         // Add file field if requested
         if include_file {
             // Create dummy PDF content
@@ -171,7 +163,6 @@ mod tests {
             tags: vec!["test".to_string()],
             s3key: "".to_string(),
             price: 0,
-            citation_royalty_bps: 0,
         };
 
         let publication = sql_client
@@ -207,7 +198,6 @@ mod tests {
                 tags: vec!["test".to_string()],
                 s3key: "".to_string(),
                 price: 0,
-                citation_royalty_bps: 0,
             };
             sql_client
                 .create_publication(&new_publication)
@@ -245,7 +235,6 @@ mod tests {
             tags: vec!["original".to_string()],
             s3key: "".to_string(),
             price: 0,
-            citation_royalty_bps: 0,
         };
 
         let publication = sql_client
@@ -321,7 +310,6 @@ mod tests {
             tags: vec!["delete".to_string()],
             s3key: "".to_string(),
             price: 0,
-            citation_royalty_bps: 0,
         };
 
         let publication = sql_client
@@ -374,7 +362,6 @@ mod tests {
                 tags: vec!["ai".to_string()],
                 s3key: "".to_string(),
                 price: 0,
-                citation_royalty_bps: 0,
             };
             sql_client
                 .create_publication(&new_publication)
@@ -419,7 +406,6 @@ mod tests {
                 tags: tags,
                 s3key: "".to_string(),
                 price: 0,
-                citation_royalty_bps: 0,
             };
             sql_client
                 .create_publication(&new_publication)

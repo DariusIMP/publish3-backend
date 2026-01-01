@@ -60,7 +60,6 @@ pub struct CreatePublicationForm {
     authors: Text<String>,
     citations: Option<Text<String>>,
     price: Text<i64>,
-    citation_royalty_bps: Text<i64>,
     file: TempFile,
 }
 
@@ -1045,7 +1044,6 @@ async fn store_publication(
         tags,
         s3key,
         price: form.price.0,
-        citation_royalty_bps: form.citation_royalty_bps.0,
     };
 
     // TODO: make these SQL operations atomic

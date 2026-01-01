@@ -32,7 +32,6 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 s3key: "".to_string(),
                 price: 0,
-                citation_royalty_bps: 0,
             })
             .await?;
         Ok(publication)
@@ -346,7 +345,6 @@ mod integration_tests {
                     tags: tags.clone(),
                     s3key: "".to_string(),
                     price: 0,
-                    citation_royalty_bps: 0,
                 })
                 .await?;
         }
@@ -392,7 +390,6 @@ mod integration_tests {
                     tags: vec![],
                     s3key: "".to_string(),
                     price: 0,
-                    citation_royalty_bps: 0,
                 })
                 .await?;
             publications.push(publication);
@@ -446,7 +443,6 @@ mod integration_tests {
                     tags: vec![],
                     s3key: "".to_string(),
                     price: 0,
-                    citation_royalty_bps: 0,
                 })
                 .await?;
             publications.push(publication);
@@ -515,7 +511,6 @@ mod integration_tests {
             tags: vec!["test".to_string(), "ai".to_string()],
             s3key: "s3://bucket/key.pdf".to_string(),
             price: 0,
-            citation_royalty_bps: 0,
         };
 
         let publication = sql_client.create_publication(&new_publication).await?;
@@ -587,7 +582,6 @@ mod integration_tests {
                     tags: vec![],
                     s3key: "".to_string(),
                     price: 0,
-                    citation_royalty_bps: 0,
                 })
                 .await?;
         }
@@ -679,7 +673,6 @@ mod integration_tests {
                 tags: vec!["original".to_string()],
                 s3key: "s3://original.pdf".to_string(),
                 price: 0,
-                citation_royalty_bps: 0,
             })
             .await?;
 

@@ -96,7 +96,6 @@ pub async fn create_test_publication(sql_client: &SqlClient, user_privy_id: Stri
         tags: vec!["test".to_string(), "research".to_string()],
         s3key: "s3://test-bucket/test-key.pdf".to_string(),
         price: 1000,
-        citation_royalty_bps: 100,
     };
 
     let publication = sql_client

@@ -10,7 +10,6 @@ CREATE TABLE publications (
     transaction_hash VARCHAR(255),
     status VARCHAR(50) DEFAULT 'PENDING_ONCHAIN' NOT NULL,
     price BIGINT DEFAULT 0 NOT NULL,
-    citation_royalty_bps BIGINT DEFAULT 0 NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT valid_status CHECK (
