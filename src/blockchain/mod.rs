@@ -50,10 +50,11 @@ pub async fn submit_publication_to_blockchain(
     privy: &PrivyClient,
     publication_data: PublicationData,
 ) -> ZResult<(Value, State)> {
-    let capability = generate_capability_for_publication(&publication_data, 600).map_err(|err| {
-        tracing::error!("Failed to generate capability for publication: {}", err);
-        zerror!(err)
-    })?;
+    let capability =
+        generate_capability_for_publication(&publication_data, 600).map_err(|err| {
+            tracing::error!("Failed to generate capability for publication: {}", err);
+            zerror!(err)
+        })?;
 
     let (value, state) = mint_publish_capability(aptos, privy, &publication_data, &capability)
         .await
@@ -71,11 +72,54 @@ pub async fn submit_publication_to_blockchain(
     Ok(submit_publish_transaction(aptos, privy, &publication_data).await?)
 }
 
+pub async fn simulate_publication_to_blockchain(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: &PublicationData,
+) -> ZResult<(Value, Value)> {
+    let capability = generate_capability_for_publication(&data, 600).map_err(|err| {
+        tracing::error!("Failed to generate capability for publication: {}", err);
+        zerror!(err)
+    })?;
+
+    let mint_publish_capability_txn =
+        prepare_mint_capability_txn(aptos, privy, data, &capability).await?;
+    let result = aptos
+        .simulate_transaction(mint_publish_capability_txn)
+        .await?;
+    let mint_simulation_value = result.inner();
+    tracing::debug!("Capability simulation result: {:?}", mint_simulation_value);
+
+    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data).await?;
+
+    let publish_simulation_result = aptos.simulate_transaction(publish_signed_txn).await?;
+    let publish_simulation_value = publish_simulation_result.inner();
+    tracing::debug!("Publish simulation result: {:?}", publish_simulation_value);
+
+    Ok((
+        mint_simulation_value.clone(),
+        publish_simulation_value.clone(),
+    ))
+}
+
 async fn submit_publish_transaction(
     aptos: &AptosFullnodeClient,
     privy: &PrivyClient,
     data: &PublicationData,
 ) -> ZResult<(Value, State)> {
+    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data).await?;
+
+    Ok(aptos
+        .submit_transaction(publish_signed_txn)
+        .await?
+        .into_parts())
+}
+
+async fn prepare_publish_signed_txn(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: &PublicationData,
+) -> ZResult<SignedTransaction> {
     let sequence_number = find_account_sequence_number(&aptos, data.user_wallet.to_string()).await;
 
     let chain_id = 250;
@@ -108,10 +152,7 @@ async fn submit_publish_transaction(
     let publish_authenticator = build_authenticator(&data.user_wallet_pk, sign_response)?;
     let publish_signed_txn = SignedTransaction::new(publish_raw_txn, publish_authenticator);
 
-    Ok(aptos
-        .submit_transaction(publish_signed_txn)
-        .await?
-        .into_parts())
+    Ok(publish_signed_txn)
 }
 
 /// Generates a [SignedCapability] that allows the user's wallet to sign
@@ -140,6 +181,25 @@ async fn mint_publish_capability(
     data: &PublicationData,
     capability: &SignedCapability,
 ) -> ZResult<(Value, State)> {
+    let mint_capability_signed_txn =
+        prepare_mint_capability_txn(aptos, privy, data, capability).await?;
+
+    tracing::debug!(
+        "Submitting transaction: {:?}",
+        mint_capability_signed_txn.raw_txn()
+    );
+    Ok(aptos
+        .submit_transaction(mint_capability_signed_txn)
+        .await?
+        .into_parts())
+}
+
+async fn prepare_mint_capability_txn(
+    aptos: &AptosFullnodeClient,
+    privy: &PrivyClient,
+    data: &PublicationData,
+    capability: &SignedCapability,
+) -> ZResult<SignedTransaction> {
     let module_id = ModuleId::new(
         AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),
         "publication_registry".to_string(),
@@ -181,15 +241,7 @@ async fn mint_publish_capability(
 
     let mint_capability_signed_txn =
         SignedTransaction::new(mint_capability_raw_txn, mint_authenticator);
-
-    tracing::debug!(
-        "Submitting transaction: {:?}",
-        mint_capability_signed_txn.raw_txn()
-    );
-    Ok(aptos
-        .submit_transaction(mint_capability_signed_txn)
-        .await?
-        .into_parts())
+    Ok(mint_capability_signed_txn)
 }
 
 pub(super) async fn find_account_sequence_number(

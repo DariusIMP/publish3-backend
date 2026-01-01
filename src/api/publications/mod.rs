@@ -1,7 +1,10 @@
 use crate::{
     AppState,
-    blockchain::purchases::{PurchaseData, submit_purchase_to_blockchain},
-    blockchain::{PublicationData, submit_publication_to_blockchain},
+    blockchain::{
+        PublicationData,
+        purchases::{PurchaseData, submit_purchase_to_blockchain},
+        simulate_publication_to_blockchain, submit_publication_to_blockchain,
+    },
     common::zresult::ZResult,
     db::{
         s3::S3Key,
@@ -31,6 +34,7 @@ use uuid::Uuid;
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/publications")
         .service(create_publication)
+        .service(simulate_publication)
         .service(list_publications)
         .service(list_publications_by_user)
         .service(search_publications_by_title)
@@ -75,6 +79,24 @@ async fn create_publication(
     let user_id = claims.sub;
 
     let response = handle_publication(&user_id, &form, &data)
+        .await
+        .map_err(|err| ErrorInternalServerError(err))?;
+
+    Ok(HttpResponse::Ok().json(response))
+}
+
+#[post("/simulate")]
+async fn simulate_publication(
+    req: actix_web::HttpRequest,
+    MultipartForm(form): MultipartForm<CreatePublicationForm>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+    let user_id = claims.sub;
+
+    let response = preview_publication(&user_id, &form, &data)
         .await
         .map_err(|err| ErrorInternalServerError(err))?;
 
@@ -882,6 +904,38 @@ async fn purchase_publication(
 struct PublicationResponse {
     id: Uuid,
     transaction_hash: String,
+}
+
+async fn preview_publication(
+    user_id: &String,
+    form: &CreatePublicationForm,
+    data: &AppState,
+) -> ZResult<()> {
+    let authors =
+        parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
+
+    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
+        .await
+        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
+
+    let publication_data =
+        prepare_blockchain_transaction(&data, &user_id, publication.id, &authors, &form)
+            .await
+            .map_err(|err| zerror!(err))?;
+
+    let _ = simulate_publication_to_blockchain(
+        &data.aptos_client,
+        &data.privy_client,
+        &publication_data,
+    )
+    .await
+    .map_err(|err| {
+        let error_msg = format!("Failed to submit publication to blockchain: {}", err);
+        tracing::debug!(error_msg);
+        zerror!(error_msg)
+    });
+
+    Ok(())
 }
 
 async fn handle_publication(
