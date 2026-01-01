@@ -109,13 +109,9 @@ async fn get_publication(
     publication_id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+    crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
-
-    let user_id = claims.sub;
-
-    check_publication_access(&data, &user_id, *publication_id).await?;
 
     let publication = data
         .sql_client
