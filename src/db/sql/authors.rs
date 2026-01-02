@@ -16,6 +16,17 @@ pub struct AuthorWithPublications {
     pub publications_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AuthorWithPurchaseCount {
+    pub privy_id: PrivyId,
+    pub name: String,
+    pub email: Option<String>,
+    pub affiliation: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub purchase_count: i64,
+}
+
 #[async_trait]
 pub trait AuthorOperations {
     async fn create_author(
@@ -65,6 +76,11 @@ pub trait AuthorOperations {
     async fn get_author_purchase_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
 
     async fn get_author_revenue(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+
+    async fn list_top_authors_by_purchases(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<AuthorWithPurchaseCount>, sqlx::Error>;
 }
 
 #[async_trait]
@@ -283,6 +299,35 @@ impl AuthorOperations for SqlClient {
         )
         .bind(privy_id)
         .fetch_one(&self.db)
+        .await
+    }
+
+    async fn list_top_authors_by_purchases(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<AuthorWithPurchaseCount>, sqlx::Error> {
+        let limit = limit.unwrap_or(3);
+        sqlx::query_as::<_, AuthorWithPurchaseCount>(
+            r#"
+            SELECT 
+                a.privy_id, 
+                a.name, 
+                a.email, 
+                a.affiliation, 
+                a.created_at, 
+                a.updated_at,
+                COALESCE(COUNT(DISTINCT p.id), 0) as purchase_count
+            FROM authors a
+            LEFT JOIN publication_authors pa ON a.privy_id = pa.author_id
+            LEFT JOIN publications pub ON pa.publication_id = pub.id
+            LEFT JOIN purchases p ON pub.id = p.publication_id
+            GROUP BY a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
+            ORDER BY purchase_count DESC, a.name ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.db)
         .await
     }
 }

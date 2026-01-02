@@ -7,14 +7,12 @@ use serde::Deserialize;
 
 use crate::{
     AppState,
-    db::sql::{
-        AuthorOperations, PrivyId,
-        models::NewAuthor,
-    },
+    db::sql::{AuthorOperations, PrivyId, models::NewAuthor},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/authors")
+        .service(get_top_authors_by_purchases)
         .service(create_author)
         .service(list_authors)
         .service(get_author)
@@ -287,4 +285,26 @@ async fn get_author_stats(
         "revenue": revenue,
         "privy_id": privy_id.to_string(),
     })))
+}
+
+#[get("/top-by-purchases")]
+async fn get_top_authors_by_purchases(
+    data: web::Data<AppState>,
+    query: web::Query<TopAuthorsQuery>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let authors = data
+        .sql_client
+        .list_top_authors_by_purchases(query.limit)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error listing top authors by purchases: {}", err);
+            ErrorInternalServerError("Internal server error")
+        })?;
+
+    Ok(HttpResponse::Ok().json(authors))
+}
+
+#[derive(Deserialize)]
+struct TopAuthorsQuery {
+    limit: Option<i64>,
 }
