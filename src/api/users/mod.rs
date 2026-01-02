@@ -71,14 +71,14 @@ struct CreateUserRequest {
     privy_id: PrivyId,
 }
 
-#[get("/{privy_id}")]
+#[get("/{id}")]
 async fn get_user(
-    privy_id: web::Path<PrivyId>,
+    id: web::Path<uuid::Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let user = data
         .sql_client
-        .get_user(privy_id.to_string())
+        .get_user(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error retrieving user: {}", err);
@@ -88,7 +88,7 @@ async fn get_user(
             }
         })?;
 
-    let author = data.sql_client.get_author(&privy_id).await.ok();
+    let author = data.sql_client.get_author(&id).await.ok();
 
     let response = serde_json::json!({
         "user": user,
@@ -98,14 +98,14 @@ async fn get_user(
     Ok(HttpResponse::Ok().json(response))
 }
 
-#[delete("/{privy_id}")]
+#[delete("/{id}")]
 async fn delete_user(
-    privy_id: web::Path<PrivyId>,
+    id: web::Path<uuid::Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let result = data
         .sql_client
-        .delete_user(privy_id.to_string())
+        .delete_user(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error deleting user: {}", err);
@@ -179,7 +179,7 @@ async fn sign_in(
 
     match existing_user {
         Ok(user) => {
-            let existing_author = data.sql_client.get_author(&privy_id).await;
+            let existing_author = data.sql_client.get_author(&user.id).await;
 
             let response = serde_json::json!({
                 "user": user,
@@ -223,14 +223,14 @@ async fn sign_in(
     }
 }
 
-#[get("/{privy_id}/wallet")]
+#[get("/{id}/wallet")]
 async fn get_user_wallet(
-    privy_id: web::Path<PrivyId>,
+    id: web::Path<uuid::Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let wallet = data
         .sql_client
-        .get_primary_wallet(&privy_id)
+        .get_primary_wallet(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error retrieving user wallet: {}", err);

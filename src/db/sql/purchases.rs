@@ -13,7 +13,7 @@ pub trait PurchaseOperations {
     async fn get_purchase(&self, purchase_id: Uuid) -> Result<Purchase, sqlx::Error>;
     async fn list_purchases_by_user(
         &self,
-        user_id: &str,
+        user_id: &Uuid,
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Purchase>, sqlx::Error>;
@@ -29,11 +29,11 @@ pub trait PurchaseOperations {
         status: &str,
         transaction_hash: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error>;
-    async fn count_purchases_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error>;
+    async fn count_purchases_by_user(&self, user_id: &uuid::Uuid) -> Result<i64, sqlx::Error>;
     async fn count_purchases(&self) -> Result<i64, sqlx::Error>;
     async fn has_user_purchased_publication(
         &self,
-        user_id: &str,
+        user_id: &Uuid,
         publication_id: Uuid,
     ) -> Result<bool, sqlx::Error>;
 }
@@ -71,7 +71,7 @@ impl PurchaseOperations for SqlClient {
 
     async fn list_purchases_by_user(
         &self,
-        user_id: &str,
+        user_id: &Uuid,
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Purchase>, sqlx::Error> {
@@ -143,7 +143,7 @@ impl PurchaseOperations for SqlClient {
         .await
     }
 
-    async fn count_purchases_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error> {
+    async fn count_purchases_by_user(&self, user_id: &uuid::Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar(
             r#"
             SELECT COUNT(*) FROM purchases WHERE user_id = $1
@@ -166,7 +166,7 @@ impl PurchaseOperations for SqlClient {
 
     async fn has_user_purchased_publication(
         &self,
-        user_id: &str,
+        user_id: &uuid::Uuid,
         publication_id: Uuid,
     ) -> Result<bool, sqlx::Error> {
         let count: i64 = sqlx::query_scalar(

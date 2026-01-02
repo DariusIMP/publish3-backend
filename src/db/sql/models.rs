@@ -7,6 +7,7 @@ use crate::db::sql::PrivyId;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
+    pub id: Uuid,
     pub privy_id: PrivyId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -14,6 +15,7 @@ pub struct User {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Author {
+    pub id: Uuid,
     pub privy_id: PrivyId,
     pub name: String,
     pub email: Option<String>,
@@ -25,7 +27,7 @@ pub struct Author {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Publication {
     pub id: Uuid,
-    pub user_id: PrivyId,
+    pub user_id: Uuid,
     pub title: String,
     pub about: String,
     pub tags: Vec<String>,
@@ -40,14 +42,14 @@ pub struct Publication {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PublicationAuthor {
     pub publication_id: Uuid,
-    pub author_id: PrivyId, // Now references authors(privy_id) as VARCHAR
+    pub author_id: Uuid,
     pub author_order: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PublicationAuthorWithDetails {
     pub publication_id: Uuid,
-    pub author_id: PrivyId,
+    pub author_id: Uuid,
     pub author_order: i32,
     pub author_name: String,
     pub author_email: Option<String>,
@@ -64,7 +66,7 @@ pub struct Wallet {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserWallet {
-    pub user_id: String,
+    pub user_id: Uuid,
     pub wallet_id: String,
     pub is_primary: bool,
     pub created_at: DateTime<Utc>,
@@ -86,6 +88,7 @@ pub struct NewUser {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewAuthor {
+    pub id: Uuid,
     pub privy_id: PrivyId,
     pub name: String,
     pub email: Option<String>,
@@ -94,7 +97,7 @@ pub struct NewAuthor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewPublication {
-    pub user_id: PrivyId,
+    pub user_id: Uuid,
     pub title: String,
     pub about: String,
     pub tags: Vec<String>,
@@ -105,7 +108,7 @@ pub struct NewPublication {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewPublicationAuthor {
     pub publication_id: Uuid,
-    pub author_id: String,
+    pub author_id: Uuid,
     pub author_order: Option<i32>,
 }
 
@@ -117,7 +120,7 @@ pub struct NewWallet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewUserWallet {
-    pub user_id: String,
+    pub user_id: Uuid,
     pub wallet_id: String,
     pub is_primary: bool,
 }
@@ -132,7 +135,7 @@ pub struct NewCitation {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Purchase {
     pub id: Uuid,
-    pub user_id: String,
+    pub user_id: Uuid,
     pub publication_id: Uuid,
     pub status: String,
     pub transaction_hash: Option<String>,
@@ -142,7 +145,7 @@ pub struct Purchase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewPurchase {
-    pub user_id: String,
+    pub user_id: Uuid,
     pub publication_id: Uuid,
     pub status: Option<String>,
     pub transaction_hash: Option<String>,

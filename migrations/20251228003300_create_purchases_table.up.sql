@@ -1,6 +1,6 @@
 CREATE TABLE purchases (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id VARCHAR(255) NOT NULL REFERENCES users(privy_id),
+    user_id UUID NOT NULL REFERENCES users(id),
     publication_id UUID NOT NULL REFERENCES publications(id),
     status VARCHAR(50) DEFAULT 'PENDING',
     transaction_hash VARCHAR(255),

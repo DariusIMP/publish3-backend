@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE publications (
     id UUID NOT NULL PRIMARY KEY DEFAULT (uuid_generate_v4 ()),
-    user_id VARCHAR(255) NOT NULL REFERENCES users (privy_id) ON DELETE SET NULL,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE SET NULL,
     title VARCHAR(512) NOT NULL,
     about TEXT NOT NULL,
     tags TEXT [] DEFAULT '{}',

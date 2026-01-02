@@ -19,7 +19,7 @@ pub struct ListPurchasesQuery {
 
 #[get("/user/{user_id}")]
 pub async fn list_user_purchases(
-    user_id: web::Path<String>,
+    user_id: web::Path<uuid::Uuid>,
     data: web::Data<AppState>,
     query: web::Query<ListPurchasesQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {

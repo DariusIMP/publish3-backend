@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgQueryResult;
 use sqlx::FromRow;
+use sqlx::postgres::PgQueryResult;
 
 use crate::db::sql::{PrivyId, SqlClient, models::Author};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AuthorWithPublications {
+    pub id: uuid::Uuid,
     pub privy_id: PrivyId,
     pub name: String,
     pub email: Option<String>,
@@ -18,6 +19,7 @@ pub struct AuthorWithPublications {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AuthorWithPurchaseCount {
+    pub id: uuid::Uuid,
     pub privy_id: PrivyId,
     pub name: String,
     pub email: Option<String>,
@@ -34,7 +36,7 @@ pub trait AuthorOperations {
         new_author: &super::models::NewAuthor,
     ) -> Result<Author, sqlx::Error>;
 
-    async fn get_author(&self, privy_id: &PrivyId) -> Result<Author, sqlx::Error>;
+    async fn get_author(&self, id: &uuid::Uuid) -> Result<Author, sqlx::Error>;
 
     async fn get_author_by_email(&self, email: &str) -> Result<Author, sqlx::Error>;
 
@@ -71,11 +73,12 @@ pub trait AuthorOperations {
 
     async fn count_authors(&self) -> Result<i64, sqlx::Error>;
 
-    async fn get_author_publication_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+    async fn get_author_publication_count(&self, privy_id: &uuid::Uuid)
+    -> Result<i64, sqlx::Error>;
 
-    async fn get_author_purchase_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+    async fn get_author_purchase_count(&self, privy_id: &uuid::Uuid) -> Result<i64, sqlx::Error>;
 
-    async fn get_author_revenue(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error>;
+    async fn get_author_revenue(&self, privy_id: &uuid::Uuid) -> Result<i64, sqlx::Error>;
 
     async fn list_top_authors_by_purchases(
         &self,
@@ -91,11 +94,12 @@ impl AuthorOperations for SqlClient {
     ) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            INSERT INTO authors (privy_id, name, email, affiliation)
-            VALUES ($1, $2, $3, $4)
-            RETURNING privy_id, name, email, affiliation, created_at, updated_at
+            INSERT INTO authors (id, privy_id, name, email, affiliation)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, privy_id, name, email, affiliation, created_at, updated_at
             "#,
         )
+        .bind(&new_author.id)
         .bind(&new_author.privy_id)
         .bind(&new_author.name)
         .bind(&new_author.email)
@@ -104,15 +108,15 @@ impl AuthorOperations for SqlClient {
         .await
     }
 
-    async fn get_author(&self, privy_id: &PrivyId) -> Result<Author, sqlx::Error> {
+    async fn get_author(&self, id: &uuid::Uuid) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, created_at, updated_at
+            SELECT id, privy_id, name, email, affiliation, created_at, updated_at
             FROM authors 
-            WHERE privy_id = $1
+            WHERE id = $1
             "#,
         )
-        .bind(privy_id)
+        .bind(id)
         .fetch_one(&self.db)
         .await
     }
@@ -120,7 +124,7 @@ impl AuthorOperations for SqlClient {
     async fn get_author_by_email(&self, email: &str) -> Result<Author, sqlx::Error> {
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, created_at, updated_at
+            SELECT id, privy_id, name, email, affiliation, created_at, updated_at
             FROM authors 
             WHERE email = $1
             "#,
@@ -141,7 +145,7 @@ impl AuthorOperations for SqlClient {
 
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, created_at, updated_at
+            SELECT id, privy_id, name, email, affiliation, created_at, updated_at
             FROM authors 
             ORDER BY name ASC
             LIMIT $1 OFFSET $2
@@ -165,6 +169,7 @@ impl AuthorOperations for SqlClient {
         sqlx::query_as::<_, AuthorWithPublications>(
             r#"
             SELECT 
+                a.id,
                 a.privy_id, 
                 a.name, 
                 a.email, 
@@ -174,7 +179,7 @@ impl AuthorOperations for SqlClient {
                 COALESCE((
                     SELECT COUNT(*) 
                     FROM publication_authors pa 
-                    WHERE pa.author_id = a.privy_id
+                    WHERE pa.author_id = a.id
                 ), 0) as publications_count
             FROM authors a
             ORDER BY publications_count DESC, a.name ASC
@@ -200,7 +205,7 @@ impl AuthorOperations for SqlClient {
 
         sqlx::query_as::<_, Author>(
             r#"
-            SELECT privy_id, name, email, affiliation, created_at, updated_at
+            SELECT id, privy_id, name, email, affiliation, created_at, updated_at
             FROM authors 
             WHERE name ILIKE $1
             ORDER BY name ASC
@@ -259,7 +264,8 @@ impl AuthorOperations for SqlClient {
             .await
     }
 
-    async fn get_author_publication_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+    async fn get_author_publication_count(&self, id: &uuid::Uuid) -> Result<i64, sqlx::Error> {
+        let author = self.get_author(id).await?;
         sqlx::query_scalar(
             r#"
             SELECT COUNT(*) 
@@ -267,12 +273,13 @@ impl AuthorOperations for SqlClient {
             WHERE author_id = $1
             "#,
         )
-        .bind(privy_id)
+        .bind(author.id)
         .fetch_one(&self.db)
         .await
     }
 
-    async fn get_author_purchase_count(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+    async fn get_author_purchase_count(&self, id: &uuid::Uuid) -> Result<i64, sqlx::Error> {
+        let author = self.get_author(id).await?;
         sqlx::query_scalar(
             r#"
             SELECT COUNT(DISTINCT p.id)
@@ -282,12 +289,13 @@ impl AuthorOperations for SqlClient {
             WHERE pa.author_id = $1
             "#,
         )
-        .bind(privy_id)
+        .bind(author.id)
         .fetch_one(&self.db)
         .await
     }
 
-    async fn get_author_revenue(&self, privy_id: &PrivyId) -> Result<i64, sqlx::Error> {
+    async fn get_author_revenue(&self, id: &uuid::Uuid) -> Result<i64, sqlx::Error> {
+        let author = self.get_author(id).await?;
         sqlx::query_scalar(
             r#"
             SELECT COALESCE(SUM(pub.price)::BIGINT, 0)
@@ -297,7 +305,7 @@ impl AuthorOperations for SqlClient {
             WHERE pa.author_id = $1
             "#,
         )
-        .bind(privy_id)
+        .bind(author.id)
         .fetch_one(&self.db)
         .await
     }
@@ -310,6 +318,7 @@ impl AuthorOperations for SqlClient {
         sqlx::query_as::<_, AuthorWithPurchaseCount>(
             r#"
             SELECT 
+                a.id,
                 a.privy_id, 
                 a.name, 
                 a.email, 
@@ -318,10 +327,10 @@ impl AuthorOperations for SqlClient {
                 a.updated_at,
                 COALESCE(COUNT(DISTINCT p.id), 0) as purchase_count
             FROM authors a
-            LEFT JOIN publication_authors pa ON a.privy_id = pa.author_id
+            LEFT JOIN publication_authors pa ON a.id = pa.author_id
             LEFT JOIN publications pub ON pa.publication_id = pub.id
             LEFT JOIN purchases p ON pub.id = p.publication_id
-            GROUP BY a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
+            GROUP BY a.id, a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
             ORDER BY purchase_count DESC, a.name ASC
             LIMIT $1
             "#,

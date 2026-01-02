@@ -60,7 +60,7 @@ pub async fn create_test_app(
         .configure(crate::api::config)
 }
 
-pub async fn create_test_user(sql_client: &SqlClient) -> String {
+pub async fn create_test_user(sql_client: &SqlClient) -> uuid::Uuid {
     use crate::db::sql::{UserOperations, models::NewUser};
 
     let privy_id = format!("privy_test_user_{}", Uuid::new_v4());
@@ -69,7 +69,7 @@ pub async fn create_test_user(sql_client: &SqlClient) -> String {
     };
 
     let user = sql_client.create_user(&new_user).await.unwrap();
-    user.privy_id
+    user.id
 }
 
 pub async fn create_test_author(sql_client: &SqlClient, user_privy_id: &str) -> String {
@@ -86,11 +86,11 @@ pub async fn create_test_author(sql_client: &SqlClient, user_privy_id: &str) -> 
     author.privy_id
 }
 
-pub async fn create_test_publication(sql_client: &SqlClient, user_privy_id: String) -> Uuid {
+pub async fn create_test_publication(sql_client: &SqlClient, user_id: uuid::Uuid) -> Uuid {
     use crate::db::sql::{PublicationOperations, models::NewPublication};
 
     let new_publication = NewPublication {
-        user_id: user_privy_id,
+        user_id,
         title: format!("Test Publication {}", Uuid::new_v4()),
         about: "Test publication description".to_string(),
         tags: vec!["test".to_string(), "research".to_string()],

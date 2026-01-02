@@ -1,5 +1,6 @@
 CREATE TABLE authors (
-    privy_id VARCHAR(255) NOT NULL PRIMARY KEY REFERENCES users (privy_id) ON DELETE CASCADE,
+    id UUID NOT NULL PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    privy_id VARCHAR(255) NOT NULL UNIQUE,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE,
     affiliation VARCHAR(200),
@@ -10,10 +11,11 @@ CREATE TABLE authors (
 -- Create a junction table for publications and authors (many-to-many relationship)
 CREATE TABLE publication_authors (
     publication_id UUID NOT NULL REFERENCES publications (id) ON DELETE CASCADE,
-    author_id VARCHAR(255) NOT NULL REFERENCES authors (privy_id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES authors (id) ON DELETE CASCADE,
     author_order INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (publication_id, author_id)
 );
 
 CREATE INDEX idx_publication_authors_publication_id ON publication_authors (publication_id);
+
 CREATE INDEX idx_publication_authors_author_id ON publication_authors (author_id);

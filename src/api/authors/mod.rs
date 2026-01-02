@@ -4,10 +4,11 @@ use actix_web::{
     get, post, put, web,
 };
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::{AuthorOperations, PrivyId, models::NewAuthor},
+    db::sql::{AuthorOperations, PrivyId, UserOperations, models::NewAuthor},
 };
 
 pub fn config(conf: &mut web::ServiceConfig) {
@@ -25,7 +26,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
 
 #[derive(Deserialize)]
 pub struct CreateAuthorRequest {
-    privy_id: PrivyId,
+    id: uuid::Uuid,
     name: String,
     email: Option<String>,
     affiliation: Option<String>,
@@ -36,10 +37,9 @@ async fn create_author(
     request: web::Json<CreateAuthorRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    // Check if author with this privy_id already exists
-    let author_by_privy_id = data.sql_client.get_author(&request.privy_id).await;
-    if author_by_privy_id.is_ok() {
-        return Err(ErrorConflict("Author with that privy_id already exists"));
+    let author = data.sql_client.get_author(&request.id).await;
+    if author.is_ok() {
+        return Err(ErrorConflict("Author with that id already exists"));
     }
 
     if let Some(email) = &request.email {
@@ -54,9 +54,15 @@ async fn create_author(
         }
     }
 
+    let user = data.sql_client.get_user(&request.id).await.map_err(|err| {
+        tracing::error!("Error finding user for id {}: {}", request.id, err);
+        ErrorNotFound("User not found - cannot create author without corresponding user")
+    })?;
+
     // Create author
     let new_author = NewAuthor {
-        privy_id: request.privy_id.clone(),
+        id: request.id,
+        privy_id: user.privy_id,
         name: request.name.clone(),
         email: request.email.clone(),
         affiliation: request.affiliation.clone(),
@@ -74,12 +80,12 @@ async fn create_author(
     Ok(HttpResponse::Ok().json(author))
 }
 
-#[get("/{privy_id}")]
+#[get("/{id}")]
 async fn get_author(
-    privy_id: web::Path<PrivyId>,
+    id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let author = data.sql_client.get_author(&privy_id).await.map_err(|err| {
+    let author = data.sql_client.get_author(&id).await.map_err(|err| {
         tracing::error!("Error retrieving author: {}", err);
         match err {
             sqlx::Error::RowNotFound => ErrorNotFound("Author not found"),
@@ -235,13 +241,13 @@ struct SearchAuthorsQuery {
     limit: Option<i64>,
 }
 
-#[get("/{privy_id}/stats")]
+#[get("/{id}/stats")]
 async fn get_author_stats(
-    privy_id: web::Path<PrivyId>,
+    id: web::Path<Uuid>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
     // Check if author exists
-    let _author = data.sql_client.get_author(&privy_id).await.map_err(|err| {
+    let _author = data.sql_client.get_author(&id).await.map_err(|err| {
         tracing::error!("Error retrieving author: {}", err);
         match err {
             sqlx::Error::RowNotFound => ErrorNotFound("Author not found"),
@@ -252,7 +258,7 @@ async fn get_author_stats(
     // Get publication count
     let publication_count = data
         .sql_client
-        .get_author_publication_count(&privy_id)
+        .get_author_publication_count(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error getting author publication count: {}", err);
@@ -262,7 +268,7 @@ async fn get_author_stats(
     // Get purchase count
     let purchase_count = data
         .sql_client
-        .get_author_purchase_count(&privy_id)
+        .get_author_purchase_count(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error getting author purchase count: {}", err);
@@ -272,7 +278,7 @@ async fn get_author_stats(
     // Get revenue
     let revenue = data
         .sql_client
-        .get_author_revenue(&privy_id)
+        .get_author_revenue(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error getting author revenue: {}", err);
@@ -283,7 +289,7 @@ async fn get_author_stats(
         "publication_count": publication_count,
         "purchase_count": purchase_count,
         "revenue": revenue,
-        "privy_id": privy_id.to_string(),
+        "id": id.to_string(),
     })))
 }
 

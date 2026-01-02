@@ -12,9 +12,9 @@ pub trait WalletOperations {
     
     async fn get_wallet_address(&self, wallet_id: &str) -> Result<String, sqlx::Error>;
     
-    async fn get_primary_wallet(&self, user_id: &str) -> Result<Wallet, sqlx::Error>;
+    async fn get_primary_wallet(&self, user_id: &uuid::Uuid) -> Result<Wallet, sqlx::Error>;
     
-    async fn get_primary_wallets(&self, user_ids: &[String]) -> Result<Vec<Wallet>, sqlx::Error>;
+    async fn get_primary_wallets(&self, user_ids: &[uuid::Uuid]) -> Result<Vec<Wallet>, sqlx::Error>;
     
     async fn wallet_exists(&self, wallet_id: &str) -> Result<bool, sqlx::Error>;
 }
@@ -74,7 +74,7 @@ impl WalletOperations for SqlClient {
         .await
     }
     
-    async fn get_primary_wallet(&self, user_id: &str) -> Result<Wallet, sqlx::Error> {
+    async fn get_primary_wallet(&self, user_id: &uuid::Uuid) -> Result<Wallet, sqlx::Error> {
         sqlx::query_as::<_, Wallet>(
             r#"
             SELECT w.wallet_id, w.wallet_address, w.created_at, w.updated_at
@@ -88,7 +88,7 @@ impl WalletOperations for SqlClient {
         .await
     }
     
-    async fn get_primary_wallets(&self, user_ids: &[String]) -> Result<Vec<Wallet>, sqlx::Error> {
+    async fn get_primary_wallets(&self, user_ids: &[uuid::Uuid]) -> Result<Vec<Wallet>, sqlx::Error> {
         if user_ids.is_empty() {
             return Ok(Vec::new());
         }

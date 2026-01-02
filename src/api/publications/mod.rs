@@ -9,8 +9,9 @@ use crate::{
     db::{
         s3::S3Key,
         sql::{
-            CitationOperations, PrivyId, PublicationAuthorOperations, PublicationOperations,
-            PurchaseOperations, SqlClient, WalletOperations, models::NewPublication,
+            CitationOperations, PublicationAuthorOperations, PublicationOperations,
+            PurchaseOperations, SqlClient, UserOperations, WalletOperations,
+            models::NewPublication,
         },
     },
     zerror,
@@ -79,7 +80,16 @@ async fn create_publication(
     })?;
     let user_id = claims.sub;
 
-    let response = handle_publication(&user_id, &form, &data)
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(user_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", user_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
+
+    let response = handle_publication(&user.id, &form, &data)
         .await
         .map_err(|err| ErrorInternalServerError(err))?;
 
@@ -174,7 +184,7 @@ async fn get_publication(
 #[derive(MultipartForm)]
 #[allow(non_snake_case)]
 pub struct UpdatePublicationForm {
-    userId: Option<Text<String>>, // Changed from Uuid to String
+    userId: Option<Text<Uuid>>,
     title: Option<Text<String>>,
     about: Option<Text<String>>,
     tags: Option<Text<String>>, // JSON array string like ["tag1", "tag2"]
@@ -229,7 +239,7 @@ async fn update_publication(
         .sql_client
         .update_publication(
             *publication_id,
-            form.userId.as_ref().map(|u| u.0.as_str()),
+            form.userId.as_ref().map(|u| &u.0),
             form.title.as_ref().map(|t| t.0.as_str()),
             form.about.as_ref().map(|a| a.0.as_str()),
             tags.as_deref(),
@@ -262,15 +272,24 @@ async fn delete_publication(
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
 
-    let user_id = claims.sub;
-    delete_publication_internal(&data, *publication_id, &user_id).await
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
+
+    delete_publication_internal(&data, *publication_id, &user.id).await
 }
 
 /// Internal function to delete a publication (used for rollback)
 async fn delete_publication_internal(
     data: &AppState,
     publication_id: Uuid,
-    user_id: &str,
+    user_id: &Uuid,
 ) -> Result<HttpResponse, actix_web::Error> {
     // First get the publication to check if it has an S3 file
     let publication = data
@@ -286,7 +305,7 @@ async fn delete_publication_internal(
         })?;
 
     // Check if the user is authorized to delete this publication
-    if publication.user_id != user_id {
+    if publication.user_id != *user_id {
         return Err(actix_web::error::ErrorForbidden(
             "You are not authorized to delete this publication",
         ));
@@ -381,9 +400,7 @@ async fn list_publications(
 }
 
 #[get("/count")]
-async fn count_publications(
-    data: web::Data<AppState>,
-) -> Result<HttpResponse, actix_web::Error> {
+async fn count_publications(data: web::Data<AppState>) -> Result<HttpResponse, actix_web::Error> {
     let total_count = data.sql_client.count_publications().await.map_err(|err| {
         tracing::error!("Error counting publications: {}", err);
         ErrorInternalServerError("Internal server error")
@@ -400,15 +417,15 @@ struct ListPublicationsQuery {
     limit: Option<i64>,
 }
 
-#[get("/user/{privy_id}")]
+#[get("/user/{id}")]
 async fn list_publications_by_user(
-    privy_id: web::Path<String>,
+    id: web::Path<uuid::Uuid>,
     data: web::Data<AppState>,
     query: web::Query<ListPublicationsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let publications = data
         .sql_client
-        .list_publications_by_user(&privy_id, query.page, query.limit)
+        .list_publications_by_user(&id, query.page, query.limit)
         .await
         .map_err(|err| {
             tracing::error!("Error listing user publications: {}", err);
@@ -417,7 +434,7 @@ async fn list_publications_by_user(
 
     let total_count = data
         .sql_client
-        .count_publications_by_user(&privy_id)
+        .count_publications_by_user(&id)
         .await
         .map_err(|err| {
             tracing::error!("Error counting user publications: {}", err);
@@ -557,9 +574,17 @@ async fn get_publication_pdf_url(
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
 
-    let user_id = claims.sub;
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
 
-    check_publication_access(&data, &user_id, *publication_id).await?;
+    check_publication_access(&data, &user.id, *publication_id).await?;
 
     let publication = data
         .sql_client
@@ -604,9 +629,17 @@ async fn check_publication_access_endpoint(
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
 
-    let user_id = claims.sub;
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
 
-    let has_access = check_publication_access(&data, &user_id, *publication_id)
+    let has_access = check_publication_access(&data, &user.id, *publication_id)
         .await
         .map_or_else(|_| false, |_| true);
 
@@ -620,7 +653,7 @@ async fn check_publication_access_endpoint(
 /// Returns Ok(()) if user has access, Err(actix_web::Error) if not
 async fn check_publication_access(
     data: &AppState,
-    user_id: &str,
+    user_id: &Uuid,
     publication_id: Uuid,
 ) -> Result<(), actix_web::Error> {
     let publication = data
@@ -636,7 +669,7 @@ async fn check_publication_access(
         })?;
 
     // Check if user is the author
-    let is_author = publication.user_id == user_id;
+    let is_author = publication.user_id == *user_id;
 
     // Get authors with details to check if user is a co-author
     let authors_with_details = data
@@ -651,7 +684,7 @@ async fn check_publication_access(
     // Check if user is one of the authors (from publication_authors table)
     let is_coauthor = authors_with_details
         .iter()
-        .any(|author_detail| author_detail.author_id == user_id);
+        .any(|author_detail| author_detail.author_id == *user_id);
 
     // Check if user has purchased this publication
     let has_purchased = data
@@ -738,7 +771,15 @@ async fn update_publication_transaction_status(
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
 
-    let user_id = claims.sub;
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
 
     let publication = data
         .sql_client
@@ -752,7 +793,7 @@ async fn update_publication_transaction_status(
             }
         })?;
 
-    if publication.user_id != user_id {
+    if publication.user_id != user.id {
         return Err(actix_web::error::ErrorForbidden(
             "You are not authorized to update this publication",
         ));
@@ -799,7 +840,15 @@ async fn purchase_publication(
         actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
     })?;
 
-    let user_id = claims.sub;
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            ErrorInternalServerError("User not found")
+        })?;
 
     // Get publication details
     let publication = data
@@ -817,7 +866,7 @@ async fn purchase_publication(
     // Check if user already purchased this publication
     let already_purchased = data
         .sql_client
-        .has_user_purchased_publication(&user_id, *publication_id)
+        .has_user_purchased_publication(&user.id, *publication_id)
         .await
         .map_err(|err| {
             tracing::error!("Error checking purchase status: {}", err);
@@ -833,7 +882,7 @@ async fn purchase_publication(
     // Get buyer's wallet
     let buyer_wallet = data
         .sql_client
-        .get_primary_wallet(&user_id)
+        .get_primary_wallet(&user.id)
         .await
         .map_err(|err| {
             tracing::error!("Error retrieving user wallet: {}", err);
@@ -889,7 +938,7 @@ async fn purchase_publication(
 
     // Record purchase in database
     let new_purchase = crate::db::sql::models::NewPurchase {
-        user_id: user_id.clone(),
+        user_id: user.id,
         publication_id: *publication_id,
         status: Some("PAID".to_string()),
         transaction_hash: Some(transaction_hash.clone()),
@@ -922,15 +971,22 @@ async fn preview_publication(
     form: &CreatePublicationForm,
     data: &AppState,
 ) -> ZResult<()> {
+    // Get user by privy_id to get UUID
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(user_id.clone())
+        .await
+        .map_err(|err| zerror!("Failed to find user for privy_id {}: {}", user_id, err))?;
+
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
-    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
+    let publication = store_publication(&form, &user.id, &authors, &data)
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
     let publication_data =
-        prepare_blockchain_transaction(&data, &user_id, publication.id, &authors, &form)
+        prepare_blockchain_transaction(&data, &user.id, publication.id, &authors, &form)
             .await
             .map_err(|err| zerror!(err))?;
 
@@ -950,14 +1006,14 @@ async fn preview_publication(
 }
 
 async fn handle_publication(
-    user_id: &String,
+    user_id: &Uuid,
     form: &CreatePublicationForm,
     data: &AppState,
 ) -> ZResult<PublicationResponse> {
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
-    let publication = store_publication(&form, user_id.clone(), authors.clone(), &data)
+    let publication = store_publication(&form, &user_id, &authors, &data)
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
@@ -1010,9 +1066,9 @@ async fn handle_publication(
 
 async fn prepare_blockchain_transaction(
     data: &AppState,
-    user_id: &String,
+    user_id: &Uuid,
     publication_id: Uuid,
-    authors: &Vec<String>,
+    authors: &Vec<Uuid>,
     form: &CreatePublicationForm,
 ) -> ZResult<PublicationData> {
     let user_wallet = data
@@ -1080,8 +1136,8 @@ fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {
 
 async fn store_publication(
     form: &CreatePublicationForm,
-    user_id: String,
-    authors: Vec<PrivyId>,
+    user_id: &Uuid,
+    authors: &Vec<Uuid>,
     data: &AppState,
 ) -> ZResult<crate::db::sql::models::Publication> {
     let tags = serde_json::from_str::<Vec<String>>(&form.tags.0)?;
@@ -1119,7 +1175,7 @@ async fn store_publication(
         .map_err(|err| zerror!("Failed to create publication entry: {}", err))?;
 
     data.sql_client
-        .set_publication_authors(publication.id, &authors)
+        .set_publication_authors(publication.id, authors)
         .await
         .map_err(|err| zerror!("Failed to set publication authors: {}", err))?;
 
@@ -1130,9 +1186,9 @@ async fn store_publication(
     Ok(publication)
 }
 
-fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<PrivyId>> {
+fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<Uuid>> {
     return Ok(
-        serde_json::from_str::<Vec<PrivyId>>(authors_text).map_err(|err| {
+        serde_json::from_str::<Vec<Uuid>>(authors_text).map_err(|err| {
             zerror!(
                 "Error parsing authors: {}. Expected JSON array of author IDs.",
                 err

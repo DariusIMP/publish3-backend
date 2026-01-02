@@ -7,7 +7,7 @@ use crate::db::sql::{PrivyId, SqlClient, models::User};
 pub trait UserOperations {
     async fn create_user(&self, new_user: &super::models::NewUser) -> Result<User, sqlx::Error>;
 
-    async fn get_user(&self, privy_id: PrivyId) -> Result<User, sqlx::Error>;
+    async fn get_user(&self, id: &uuid::Uuid) -> Result<User, sqlx::Error>;
 
     async fn list_users(
         &self,
@@ -15,7 +15,7 @@ pub trait UserOperations {
         limit: Option<i64>,
     ) -> Result<Vec<User>, sqlx::Error>;
 
-    async fn delete_user(&self, privy_id: PrivyId) -> Result<PgQueryResult, sqlx::Error>;
+    async fn delete_user(&self, id: &uuid::Uuid) -> Result<PgQueryResult, sqlx::Error>;
 
     async fn count_users(&self) -> Result<i64, sqlx::Error>;
 
@@ -30,7 +30,7 @@ impl UserOperations for SqlClient {
             INSERT INTO users 
             (privy_id)
             VALUES ($1)
-            RETURNING privy_id, created_at, updated_at
+            RETURNING id, privy_id, created_at, updated_at
             "#,
         )
         .bind(&new_user.privy_id)
@@ -38,15 +38,15 @@ impl UserOperations for SqlClient {
         .await
     }
 
-    async fn get_user(&self, privy_id: PrivyId) -> Result<User, sqlx::Error> {
+    async fn get_user(&self, id: &uuid::Uuid) -> Result<User, sqlx::Error> {
         sqlx::query_as::<_, User>(
             r#"
-            SELECT privy_id, created_at, updated_at
+            SELECT id, privy_id, created_at, updated_at
             FROM users 
-            WHERE privy_id = $1
+            WHERE id = $1
             "#,
         )
-        .bind(privy_id)
+        .bind(id)
         .fetch_one(&self.db)
         .await
     }
@@ -62,7 +62,7 @@ impl UserOperations for SqlClient {
 
         sqlx::query_as::<_, User>(
             r#"
-            SELECT privy_id, created_at, updated_at
+            SELECT id, privy_id, created_at, updated_at
             FROM users 
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -74,9 +74,9 @@ impl UserOperations for SqlClient {
         .await
     }
 
-    async fn delete_user(&self, privy_id: PrivyId) -> Result<PgQueryResult, sqlx::Error> {
-        sqlx::query("DELETE FROM users WHERE privy_id = $1")
-            .bind(privy_id)
+    async fn delete_user(&self, id: &uuid::Uuid) -> Result<PgQueryResult, sqlx::Error> {
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(id)
             .execute(&self.db)
             .await
     }
@@ -88,7 +88,15 @@ impl UserOperations for SqlClient {
     }
 
     async fn get_user_by_privy_id(&self, privy_id: PrivyId) -> Result<User, sqlx::Error> {
-        // This is now the same as get_user, but we keep it for API compatibility
-        self.get_user(privy_id).await
+        sqlx::query_as::<_, User>(
+            r#"
+            SELECT id, privy_id, created_at, updated_at
+            FROM users 
+            WHERE privy_id = $1
+            "#,
+        )
+        .bind(privy_id)
+        .fetch_one(&self.db)
+        .await
     }
 }

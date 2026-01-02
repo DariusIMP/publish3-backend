@@ -3,11 +3,17 @@ use privy_rs::generated::types::{CreateWalletBody, OwnerIdInput, WalletChainType
 use crate::{
     AppState, CONFIG,
     common::zresult::ZResult,
-    db::sql::{NewUserWallet, NewWallet, PrivyId, WalletOperations},
+    db::sql::{NewUserWallet, NewWallet, PrivyId, UserOperations, WalletOperations},
     zerror,
 };
 
 pub(crate) async fn create_user_wallet(data: &AppState, user_privy_id: PrivyId) -> ZResult<()> {
+    let user = data.sql_client.get_user_by_privy_id(user_privy_id.clone()).await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", user_privy_id, err);
+            zerror!("User not found")
+        })?;
+
     let privy = data.privy_client.clone();
     let wallet = privy
         .wallets()
@@ -41,7 +47,7 @@ pub(crate) async fn create_user_wallet(data: &AppState, user_privy_id: PrivyId) 
         })?;
 
     let new_user_wallet = NewUserWallet {
-        user_id: user_privy_id.clone(),
+        user_id: user.id,
         wallet_id: wallet.id.clone(),
         is_primary: true,
     };

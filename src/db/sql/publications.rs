@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
-use crate::db::sql::{CitationOperations, SqlClient, models::Publication};
+use crate::db::sql::{Author, CitationOperations, SqlClient, models::Publication};
 
 #[async_trait]
 pub trait PublicationOperations {
@@ -27,7 +27,7 @@ pub trait PublicationOperations {
 
     async fn list_publications_by_user(
         &self,
-        user_id: &str,
+        user_id: &Uuid,
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error>;
@@ -49,7 +49,7 @@ pub trait PublicationOperations {
     async fn update_publication(
         &self,
         publication_id: Uuid,
-        user_id: Option<&str>,
+        user_id: Option<&Uuid>,
         title: Option<&str>,
         about: Option<&str>,
         tags: Option<&[String]>,
@@ -60,7 +60,7 @@ pub trait PublicationOperations {
 
     async fn count_publications(&self) -> Result<i64, sqlx::Error>;
 
-    async fn count_publications_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error>;
+    async fn count_publications_by_user(&self, user_id: &uuid::Uuid) -> Result<i64, sqlx::Error>;
 
     async fn get_publication_authors(
         &self,
@@ -152,7 +152,7 @@ impl PublicationOperations for SqlClient {
         &self,
         page: Option<i64>,
         limit: Option<i64>,
-    ) -> Result<Vec<(Publication, Vec<super::models::Author>)>, sqlx::Error> {
+    ) -> Result<Vec<(Publication, Vec<Author>)>, sqlx::Error> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
         let offset = (page - 1) * limit;
@@ -172,22 +172,7 @@ impl PublicationOperations for SqlClient {
 
         let mut result = Vec::new();
         for publication in publications {
-            let authors_with_details = self
-                .get_publication_authors_with_details(publication.id)
-                .await?;
-
-            let authors: Vec<super::models::Author> = authors_with_details
-                .into_iter()
-                .map(|author_detail| super::models::Author {
-                    privy_id: author_detail.author_id,
-                    name: author_detail.author_name,
-                    email: author_detail.author_email,
-                    affiliation: author_detail.author_affiliation,
-                    created_at: chrono::Utc::now(), // TODO: refactor this
-                    updated_at: chrono::Utc::now(),
-                })
-                .collect();
-
+            let authors = self.get_publication_authors(publication.id).await?;
             result.push((publication, authors));
         }
 
@@ -196,7 +181,7 @@ impl PublicationOperations for SqlClient {
 
     async fn list_publications_by_user(
         &self,
-        user_id: &str,
+        user_id: &uuid::Uuid,
         page: Option<i64>,
         limit: Option<i64>,
     ) -> Result<Vec<Publication>, sqlx::Error> {
@@ -276,7 +261,7 @@ impl PublicationOperations for SqlClient {
     async fn update_publication(
         &self,
         publication_id: Uuid,
-        user_id: Option<&str>,
+        user_id: Option<&Uuid>,
         title: Option<&str>,
         about: Option<&str>,
         tags: Option<&[String]>,
@@ -317,7 +302,7 @@ impl PublicationOperations for SqlClient {
             .await
     }
 
-    async fn count_publications_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error> {
+    async fn count_publications_by_user(&self, user_id: &uuid::Uuid) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COUNT(*) FROM publications WHERE user_id = $1")
             .bind(user_id)
             .fetch_one(&self.db)
@@ -330,9 +315,9 @@ impl PublicationOperations for SqlClient {
     ) -> Result<Vec<super::models::Author>, sqlx::Error> {
         sqlx::query_as::<_, super::models::Author>(
             r#"
-            SELECT a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
+            SELECT a.id, a.privy_id, a.name, a.email, a.affiliation, a.created_at, a.updated_at
             FROM authors a
-            INNER JOIN publication_authors pa ON a.privy_id = pa.author_id
+            INNER JOIN publication_authors pa ON a.id = pa.author_id
             WHERE pa.publication_id = $1
             ORDER BY pa.author_order ASC
             "#,
@@ -388,7 +373,7 @@ impl PublicationOperations for SqlClient {
                 a.email as author_email,
                 a.affiliation as author_affiliation
             FROM publication_authors pa
-            INNER JOIN authors a ON pa.author_id = a.privy_id
+            INNER JOIN authors a ON pa.author_id = a.id
             WHERE pa.publication_id = $1
             ORDER BY pa.author_order ASC
             "#,
