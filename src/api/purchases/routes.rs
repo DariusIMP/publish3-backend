@@ -48,3 +48,17 @@ pub async fn list_user_purchases(
         "limit": query.limit.unwrap_or(20),
     })))
 }
+
+#[get("/count")]
+pub async fn count_purchases(
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let total_count = data.sql_client.count_purchases().await.map_err(|err| {
+        tracing::error!("Error counting purchases: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "total": total_count,
+    })))
+}

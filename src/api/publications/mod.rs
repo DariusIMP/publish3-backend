@@ -36,6 +36,7 @@ pub fn config(conf: &mut web::ServiceConfig) {
         .service(create_publication)
         .service(simulate_publication)
         .service(list_publications)
+        .service(count_publications)
         .service(list_publications_by_user)
         .service(search_publications_by_title)
         .service(search_publications_by_tag)
@@ -376,6 +377,20 @@ async fn list_publications(
         "total": total_count,
         "page": query.page.unwrap_or(1),
         "limit": query.limit.unwrap_or(20)
+    })))
+}
+
+#[get("/count")]
+async fn count_publications(
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let total_count = data.sql_client.count_publications().await.map_err(|err| {
+        tracing::error!("Error counting publications: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "total": total_count,
     })))
 }
 

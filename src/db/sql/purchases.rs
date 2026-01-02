@@ -30,6 +30,7 @@ pub trait PurchaseOperations {
         transaction_hash: Option<&str>,
     ) -> Result<PgQueryResult, sqlx::Error>;
     async fn count_purchases_by_user(&self, user_id: &str) -> Result<i64, sqlx::Error>;
+    async fn count_purchases(&self) -> Result<i64, sqlx::Error>;
     async fn has_user_purchased_publication(
         &self,
         user_id: &str,
@@ -149,6 +150,16 @@ impl PurchaseOperations for SqlClient {
             "#,
         )
         .bind(user_id)
+        .fetch_one(&self.db)
+        .await
+    }
+
+    async fn count_purchases(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM purchases
+            "#,
+        )
         .fetch_one(&self.db)
         .await
     }

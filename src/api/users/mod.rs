@@ -14,6 +14,7 @@ use crate::{
 
 pub fn config(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/users")
+        .service(count_users)
         .service(create_user)
         .service(get_user)
         .service(delete_user)
@@ -142,6 +143,18 @@ async fn list_users(
         "total": total_count,
         "page": query.page.unwrap_or(1),
         "limit": query.limit.unwrap_or(20)
+    })))
+}
+
+#[get("/count")]
+async fn count_users(data: web::Data<AppState>) -> Result<HttpResponse, actix_web::Error> {
+    let total_count = data.sql_client.count_users().await.map_err(|err| {
+        tracing::error!("Error counting users: {}", err);
+        ErrorInternalServerError("Internal server error")
+    })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "total": total_count,
     })))
 }
 
