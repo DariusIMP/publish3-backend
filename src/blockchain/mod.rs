@@ -17,6 +17,7 @@ use privy_rs::{
     PrivateKey, PrivyClient,
     generated::{ResponseValue, types::RawSignResponse},
 };
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::CAPABILITY_SIGNER;
@@ -34,6 +35,22 @@ use std::{
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[derive(Debug, Serialize)]
+pub struct TransactionSimulation {
+    pub gas_used: u64,
+    pub gas_unit_price: u64,
+    pub total_cost_octas: u64,
+    pub function: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SimulationSummary {
+    pub mint_capability: TransactionSimulation,
+    pub publish: TransactionSimulation,
+    pub total_gas_cost_octas: u64,
+}
+
 pub struct PublicationData {
     pub paper_uid_hash: [u8; 32],
     pub paper_hash: [u8; 32],
@@ -76,7 +93,7 @@ pub async fn simulate_publication_to_blockchain(
     aptos: &AptosFullnodeClient,
     privy: &PrivyClient,
     data: &PublicationData,
-) -> ZResult<(Value, Value)> {
+) -> ZResult<SimulationSummary> {
     let capability = generate_capability_for_publication(data, 600).map_err(|err| {
         tracing::error!("Failed to generate capability for publication: {}", err);
         zerror!(err)
@@ -96,10 +113,44 @@ pub async fn simulate_publication_to_blockchain(
     let publish_simulation_value = publish_simulation_result.inner();
     tracing::debug!("Publish simulation result: {:?}", publish_simulation_value);
 
-    Ok((
-        mint_simulation_value.clone(),
-        publish_simulation_value.clone(),
-    ))
+    // Helper to parse a simulation value (array of one transaction simulation)
+    let parse_simulation = |value: &Value, function_name: &str| -> ZResult<TransactionSimulation> {
+        let arr = value
+            .as_array()
+            .ok_or_else(|| zerror!("Simulation result is not an array"))?;
+        let first = arr
+            .first()
+            .ok_or_else(|| zerror!("Simulation result array is empty"))?;
+        let gas_used = first
+            .get("gas_used")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .parse::<u64>()
+            .map_err(|e| zerror!("Failed to parse gas_used: {}", e))?;
+        let gas_unit_price = first
+            .get("gas_unit_price")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .parse::<u64>()
+            .map_err(|e| zerror!("Failed to parse gas_unit_price: {}", e))?;
+        let total_cost_octas = gas_used * gas_unit_price;
+        Ok(TransactionSimulation {
+            gas_used,
+            gas_unit_price,
+            total_cost_octas,
+            function: function_name.to_string(),
+        })
+    };
+
+    let mint_sim = parse_simulation(&mint_simulation_value, "mint_publish_capability_with_sig")?;
+    let publish_sim = parse_simulation(&publish_simulation_value, "publish")?;
+    let total_gas_cost_octas = mint_sim.total_cost_octas + publish_sim.total_cost_octas;
+
+    Ok(SimulationSummary {
+        mint_capability: mint_sim,
+        publish: publish_sim,
+        total_gas_cost_octas,
+    })
 }
 
 async fn submit_publish_transaction(

@@ -107,11 +107,11 @@ async fn simulate_publication(
     })?;
     let user_id = claims.sub;
 
-    preview_publication(&user_id, &form, &data)
+    let summary = preview_publication(&user_id, &form, &data)
         .await
         .map_err(ErrorInternalServerError)?;
 
-    Ok(HttpResponse::Ok().json(()))
+    Ok(HttpResponse::Ok().json(summary))
 }
 
 #[get("/{publication_id}")]
@@ -970,7 +970,7 @@ async fn preview_publication(
     user_id: &String,
     form: &CreatePublicationForm,
     data: &AppState,
-) -> ZResult<()> {
+) -> ZResult<crate::blockchain::SimulationSummary> {
     // Get user by privy_id to get UUID
     let user = data
         .sql_client
@@ -986,19 +986,19 @@ async fn preview_publication(
         .await
         .map_err(|err| zerror!(err))?;
 
-    let _ = simulate_publication_to_blockchain(
+    let summary = simulate_publication_to_blockchain(
         &data.aptos_client,
         &data.privy_client,
         &publication_data,
     )
     .await
     .map_err(|err| {
-        let error_msg = format!("Failed to submit publication to blockchain: {}", err);
+        let error_msg = format!("Failed to simulate publication to blockchain: {}", err);
         tracing::debug!(error_msg);
         zerror!(error_msg)
-    });
+    })?;
 
-    Ok(())
+    Ok(summary)
 }
 
 async fn handle_publication(
