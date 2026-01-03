@@ -7,5 +7,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         web::scope("/purchases")
             .service(routes::list_user_purchases)
             .service(routes::count_purchases)
+            .service(routes::simulate_purchase)
     );
 }

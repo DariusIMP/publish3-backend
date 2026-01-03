@@ -171,6 +171,7 @@ async fn get_publication(
         "user_id": publication.user_id,
         "title": publication.title,
         "about": publication.about,
+        "price": publication.price,
         "tags": publication.tags,
         "created_at": publication.created_at,
         "updated_at": publication.updated_at,

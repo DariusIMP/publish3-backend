@@ -308,23 +308,22 @@ pub(super) async fn find_account_sequence_number(
     aptos: &AptosFullnodeClient,
     address: String,
 ) -> u64 {
-    let resource = aptos
-        .get_account_resources(address)
-        .await
-        .unwrap()
-        .into_inner();
-
-    resource
-        .iter()
-        .find(|r| r.type_ == "0x1::account::Account")
-        .unwrap() // TODO: the account won't exist until the user funds it
-        .data
-        .get("sequence_number")
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .parse::<u64>()
-        .unwrap()
+    match aptos.get_account_resources(address).await {
+        Ok(response) => {
+            let resource = response.into_inner();
+            resource
+                .iter()
+                .find(|r| r.type_ == "0x1::account::Account")
+                .and_then(|r| r.data.get("sequence_number"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.parse::<u64>().unwrap_or(0))
+                .unwrap_or(0)
+        }
+        Err(err) => {
+            tracing::warn!("Failed to get account resources, assuming sequence number 0: {}", err);
+            0
+        }
+    }
 }
 
 pub(super) fn build_authenticator(

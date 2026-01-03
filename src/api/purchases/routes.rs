@@ -1,15 +1,19 @@
 use actix_web::{
     web,
     HttpResponse,
-    get,
+    get, post,
     error::ErrorInternalServerError,
 };
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::{
     AppState,
-    db::sql::PurchaseOperations,
+    blockchain::purchases::{PurchaseData, simulate_purchase_to_blockchain},
+    db::sql::{PurchaseOperations, UserOperations, PublicationOperations, WalletOperations},
 };
+use aptos_rust_sdk_types::api_types::address::AccountAddress;
+use std::str::FromStr;
 
 #[derive(Debug, Deserialize)]
 pub struct ListPurchasesQuery {
@@ -61,4 +65,94 @@ pub async fn count_purchases(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "total": total_count,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SimulatePurchaseRequest {
+    publication_id: Uuid,
+}
+
+#[post("/simulate")]
+pub async fn simulate_purchase(
+    req: actix_web::HttpRequest,
+    data: web::Data<AppState>,
+    request: web::Json<SimulatePurchaseRequest>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let claims = crate::auth::privy::get_privy_claims(&req).ok_or_else(|| {
+        actix_web::error::ErrorUnauthorized("Valid Privy authentication token required")
+    })?;
+
+    let privy_id = claims.sub;
+    let user = data
+        .sql_client
+        .get_user_by_privy_id(privy_id.clone())
+        .await
+        .map_err(|err| {
+            tracing::error!("Error finding user for privy_id {}: {}", privy_id, err);
+            actix_web::error::ErrorInternalServerError("User not found")
+        })?;
+
+    // Get publication details
+    let publication = data
+        .sql_client
+        .get_publication(request.publication_id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving publication: {}", err);
+            match err {
+                sqlx::Error::RowNotFound => actix_web::error::ErrorNotFound("Publication not found"),
+                _ => actix_web::error::ErrorInternalServerError("Internal server error"),
+            }
+        })?;
+
+    let buyer_wallet = data
+        .sql_client
+        .get_primary_wallet(&user.id)
+        .await
+        .map_err(|err| {
+            tracing::error!("Error retrieving user wallet: {}", err);
+            actix_web::error::ErrorInternalServerError("Internal server error")
+        })?;
+
+    let buyer_wallet_pk = data
+        .privy_client
+        .wallets()
+        .get(&buyer_wallet.wallet_id)
+        .await
+        .map(|wallet| wallet.public_key.clone())
+        .map_err(|err| {
+            tracing::error!("Failed to get wallet from Privy: {}", err);
+            actix_web::error::ErrorInternalServerError("Internal server error")
+        })?
+        .ok_or_else(|| {
+            tracing::error!("Wallet lacks public key");
+            actix_web::error::ErrorInternalServerError("Wallet lacks public key")
+        })?;
+
+    let buyer_wallet_address =
+        AccountAddress::from_str(&buyer_wallet.wallet_address).map_err(|err| {
+            tracing::error!("Error parsing wallet address: {}", err);
+            actix_web::error::ErrorInternalServerError("Invalid wallet address")
+        })?;
+
+    let purchase_data = PurchaseData {
+        buyer_wallet: buyer_wallet_address,
+        buyer_wallet_id: buyer_wallet.wallet_id.clone(),
+        buyer_wallet_pk,
+        paper_id: publication.id,
+    };
+
+    // Simulate purchase transaction
+    let simulation = simulate_purchase_to_blockchain(
+        &data.aptos_client,
+        &data.privy_client,
+        purchase_data,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!("Failed to simulate purchase to blockchain: {}", err);
+        actix_web::error::ErrorInternalServerError("Blockchain simulation failed")
+    })?;
+
+    Ok(HttpResponse::Ok().json(simulation))
 }
