@@ -981,14 +981,10 @@ async fn preview_publication(
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
-    let publication = store_publication(form, &user.id, &authors, data)
+    let id = Uuid::new_v4();
+    let publication_data = prepare_blockchain_transaction(data, &user.id, id, &authors, form)
         .await
-        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
-
-    let publication_data =
-        prepare_blockchain_transaction(data, &user.id, publication.id, &authors, form)
-            .await
-            .map_err(|err| zerror!(err))?;
+        .map_err(|err| zerror!(err))?;
 
     let _ = simulate_publication_to_blockchain(
         &data.aptos_client,

@@ -83,14 +83,14 @@ pub async fn simulate_publication_to_blockchain(
     })?;
 
     let mint_publish_capability_txn =
-        prepare_mint_capability_txn(aptos, privy, data, &capability).await?;
+        prepare_mint_capability_txn(aptos, privy, data, &capability, true).await?;
     let result = aptos
         .simulate_transaction(mint_publish_capability_txn)
         .await?;
     let mint_simulation_value = result.inner();
     tracing::debug!("Capability simulation result: {:?}", mint_simulation_value);
 
-    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data).await?;
+    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data, true).await?;
 
     let publish_simulation_result = aptos.simulate_transaction(publish_signed_txn).await?;
     let publish_simulation_value = publish_simulation_result.inner();
@@ -107,7 +107,7 @@ async fn submit_publish_transaction(
     privy: &PrivyClient,
     data: &PublicationData,
 ) -> ZResult<(Value, State)> {
-    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data).await?;
+    let publish_signed_txn = prepare_publish_signed_txn(aptos, privy, data, false).await?;
 
     Ok(aptos
         .submit_transaction(publish_signed_txn)
@@ -119,6 +119,7 @@ async fn prepare_publish_signed_txn(
     aptos: &AptosFullnodeClient,
     privy: &PrivyClient,
     data: &PublicationData,
+    simulation: bool,
 ) -> ZResult<SignedTransaction> {
     let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string()).await;
 
@@ -147,9 +148,13 @@ async fn prepare_publish_signed_txn(
         ChainId::Other(chain_id),
     );
 
-    let sign_response = sign_with_privy(privy, &data.user_wallet_id, &publish_raw_txn).await?;
+    let publish_authenticator = if simulation {
+        build_simulation_authenticator(&data.user_wallet_pk)?
+    } else {
+        let sign_response = sign_with_privy(privy, &data.user_wallet_id, &publish_raw_txn).await?;
+        build_authenticator(&data.user_wallet_pk, sign_response)?
+    };
 
-    let publish_authenticator = build_authenticator(&data.user_wallet_pk, sign_response)?;
     let publish_signed_txn = SignedTransaction::new(publish_raw_txn, publish_authenticator);
 
     Ok(publish_signed_txn)
@@ -182,7 +187,7 @@ async fn mint_publish_capability(
     capability: &SignedCapability,
 ) -> ZResult<(Value, State)> {
     let mint_capability_signed_txn =
-        prepare_mint_capability_txn(aptos, privy, data, capability).await?;
+        prepare_mint_capability_txn(aptos, privy, data, capability, false).await?;
 
     tracing::debug!(
         "Submitting transaction: {:?}",
@@ -199,6 +204,7 @@ async fn prepare_mint_capability_txn(
     privy: &PrivyClient,
     data: &PublicationData,
     capability: &SignedCapability,
+    simulation: bool,
 ) -> ZResult<SignedTransaction> {
     let module_id = ModuleId::new(
         AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),
@@ -234,10 +240,13 @@ async fn prepare_mint_capability_txn(
         ChainId::from_u8(chain_id),
     );
 
-    let sign_response =
-        sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn).await?;
-
-    let mint_authenticator = build_authenticator(&data.user_wallet_pk, sign_response)?;
+    let mint_authenticator = if simulation {
+        build_simulation_authenticator(&data.user_wallet_pk)?
+    } else {
+        let sign_response =
+            sign_with_privy(privy, &data.user_wallet_id, &mint_capability_raw_txn).await?;
+        build_authenticator(&data.user_wallet_pk, sign_response)?
+    };
 
     let mint_capability_signed_txn =
         SignedTransaction::new(mint_capability_raw_txn, mint_authenticator);
@@ -253,7 +262,7 @@ pub(super) async fn find_account_sequence_number(
         .await
         .unwrap()
         .into_inner();
-    
+
     resource
         .iter()
         .find(|r| r.type_ == "0x1::account::Account")
@@ -274,9 +283,10 @@ pub(super) fn build_authenticator(
     tracing::debug!("Building authenticator for public key: {}", public_key_hex);
     tracing::debug!("Raw signature from Privy: {}", signature.data.signature);
 
-    let mut pk_bytes = hex::decode(public_key_hex.trim_start_matches("0x")).inspect_err(|&err| {
-        tracing::error!("Hex decode error for public key: {}", err);
-    })?;
+    let mut pk_bytes =
+        hex::decode(public_key_hex.trim_start_matches("0x")).inspect_err(|&err| {
+            tracing::error!("Hex decode error for public key: {}", err);
+        })?;
     tracing::debug!("Public key bytes length: {}", pk_bytes.len());
     match pk_bytes.len() {
         32 => {} // correct
@@ -306,6 +316,44 @@ pub(super) fn build_authenticator(
     })?;
 
     Ok(TransactionAuthenticator::ed25519(pk, sig))
+}
+
+pub(super) fn build_simulation_authenticator(
+    public_key_hex: &str,
+) -> ZResult<TransactionAuthenticator> {
+    tracing::debug!(
+        "Building simulation authenticator for public key: {}",
+        public_key_hex
+    );
+
+    let mut pk_bytes =
+        hex::decode(public_key_hex.trim_start_matches("0x")).inspect_err(|&err| {
+            tracing::error!("Hex decode error for public key: {}", err);
+        })?;
+    tracing::debug!("Public key bytes length: {}", pk_bytes.len());
+    match pk_bytes.len() {
+        32 => {} // correct
+        33 if pk_bytes[0] == 0x00 => {
+            pk_bytes.remove(0); // strip leading padding byte
+            tracing::debug!("Stripped leading 0x00 byte from public key");
+        }
+        other => {
+            return Err(zerror!(
+                "Invalid Ed25519 public key length: {} bytes",
+                other
+            ));
+        }
+    }
+    let pk = PublicKey::try_from(pk_bytes.as_slice()).map_err(|err| {
+        tracing::error!("Error decoding public key: {}", err);
+        err
+    })?;
+    let zero_sig_bytes = [0u8; 64];
+    let dummy_sig = Signature::try_from(&zero_sig_bytes[..]).map_err(|err| {
+        tracing::error!("Failed to create dummy signature: {}", err);
+        err
+    })?;
+    Ok(TransactionAuthenticator::ed25519(pk, dummy_sig))
 }
 
 pub(super) async fn sign_with_privy(
