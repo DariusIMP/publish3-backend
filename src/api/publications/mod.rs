@@ -91,7 +91,7 @@ async fn create_publication(
 
     let response = handle_publication(&user.id, &form, &data)
         .await
-        .map_err(|err| ErrorInternalServerError(err))?;
+        .map_err(ErrorInternalServerError)?;
 
     Ok(HttpResponse::Ok().json(response))
 }
@@ -107,11 +107,11 @@ async fn simulate_publication(
     })?;
     let user_id = claims.sub;
 
-    let response = preview_publication(&user_id, &form, &data)
+    preview_publication(&user_id, &form, &data)
         .await
-        .map_err(|err| ErrorInternalServerError(err))?;
+        .map_err(ErrorInternalServerError)?;
 
-    Ok(HttpResponse::Ok().json(response))
+    Ok(HttpResponse::Ok().json(()))
 }
 
 #[get("/{publication_id}")]
@@ -318,11 +318,11 @@ async fn delete_publication_internal(
         ));
     }
 
-    if !publication.s3key.is_empty() {
-        if let Err(err) = data.s3_client.delete_file(S3Key(publication.s3key)).await {
-            tracing::warn!("Failed to delete S3 file: {}", err);
-            // Continue with database deletion even if S3 deletion fails
-        }
+    if !publication.s3key.is_empty()
+        && let Err(err) = data.s3_client.delete_file(S3Key(publication.s3key)).await
+    {
+        tracing::warn!("Failed to delete S3 file: {}", err);
+        // Continue with database deletion even if S3 deletion fails
     }
 
     let result = data
@@ -735,7 +735,7 @@ async fn process_citations(sql_client: &SqlClient, publication_id: Uuid, citatio
             Ok(None) => {
                 let new_citation = crate::db::sql::models::NewCitation {
                     citing_publication_id: publication_id,
-                    cited_publication_id: cited_publication_id,
+                    cited_publication_id,
                 };
 
                 if let Err(err) = sql_client.create_citation(&new_citation).await {
@@ -981,12 +981,12 @@ async fn preview_publication(
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
-    let publication = store_publication(&form, &user.id, &authors, &data)
+    let publication = store_publication(form, &user.id, &authors, data)
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
     let publication_data =
-        prepare_blockchain_transaction(&data, &user.id, publication.id, &authors, &form)
+        prepare_blockchain_transaction(data, &user.id, publication.id, &authors, form)
             .await
             .map_err(|err| zerror!(err))?;
 
@@ -1013,12 +1013,12 @@ async fn handle_publication(
     let authors =
         parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
 
-    let publication = store_publication(&form, &user_id, &authors, &data)
+    let publication = store_publication(form, user_id, &authors, data)
         .await
         .map_err(|err| zerror!("Failed to store publication: {}", err))?;
 
     let publication_data =
-        prepare_blockchain_transaction(&data, &user_id, publication.id, &authors, &form)
+        prepare_blockchain_transaction(data, user_id, publication.id, &authors, form)
             .await
             .map_err(|err| zerror!(err))?;
 
@@ -1052,23 +1052,23 @@ async fn handle_publication(
             if let Err(err) = result {
                 tracing::error!("Failed to update publication status on DB: {}", err);
             }
-            return Ok(PublicationResponse {
+            Ok(PublicationResponse {
                 id: publication.id,
                 transaction_hash: transaction_hash.unwrap(),
-            });
+            })
         }
         Err(err) => {
             let _ = delete_publication_internal(data, publication.id, user_id).await;
-            return Err(zerror!("The publication transaction failed: {}", err));
+            Err(zerror!("The publication transaction failed: {}", err))
         }
-    };
+    }
 }
 
 async fn prepare_blockchain_transaction(
     data: &AppState,
     user_id: &Uuid,
     publication_id: Uuid,
-    authors: &Vec<Uuid>,
+    authors: &[Uuid],
     form: &CreatePublicationForm,
 ) -> ZResult<PublicationData> {
     let user_wallet = data
@@ -1110,7 +1110,7 @@ async fn prepare_blockchain_transaction(
         paper_uid_hash,
         paper_hash,
         user_wallet: user_wallet_account,
-        user_wallet_id: (&user_wallet.wallet_id).clone(),
+        user_wallet_id: user_wallet.wallet_id.clone(),
         user_wallet_pk,
         author_wallets: authors_wallets_accounts,
         price: form.price.0 as u64,
@@ -1137,7 +1137,7 @@ fn hash_file_sha3_256(temp_file: &TempFile) -> ZResult<[u8; 32]> {
 async fn store_publication(
     form: &CreatePublicationForm,
     user_id: &Uuid,
-    authors: &Vec<Uuid>,
+    authors: &[Uuid],
     data: &AppState,
 ) -> ZResult<crate::db::sql::models::Publication> {
     let tags = serde_json::from_str::<Vec<String>>(&form.tags.0)?;
@@ -1159,7 +1159,7 @@ async fn store_publication(
         .map_err(|err| zerror!("Error uploading file to S3: {}", err))?;
 
     let new_publication = NewPublication {
-        user_id: user_id.clone(),
+        user_id: *user_id,
         title: form.title.0.clone(),
         about: form.about.0.clone(),
         tags,
@@ -1187,12 +1187,10 @@ async fn store_publication(
 }
 
 fn parse_authors(authors_text: &Text<String>) -> ZResult<Vec<Uuid>> {
-    return Ok(
-        serde_json::from_str::<Vec<Uuid>>(authors_text).map_err(|err| {
-            zerror!(
-                "Error parsing authors: {}. Expected JSON array of author IDs.",
-                err
-            )
-        })?,
-    );
+    serde_json::from_str::<Vec<Uuid>>(authors_text).map_err(|err| {
+        zerror!(
+            "Error parsing authors: {}. Expected JSON array of author IDs.",
+            err
+        )
+    })
 }

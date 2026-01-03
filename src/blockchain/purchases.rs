@@ -33,7 +33,7 @@ pub async fn submit_purchase_to_blockchain(
     data: PurchaseData,
 ) -> ZResult<(Value, State)> {
     let sequence_number =
-        super::find_account_sequence_number(&aptos, data.buyer_wallet.to_string()).await;
+        super::find_account_sequence_number(aptos, data.buyer_wallet.to_string()).await;
 
     let chain_id = 250;
     let module_id = ModuleId::new(

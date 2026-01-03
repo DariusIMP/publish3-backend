@@ -43,7 +43,7 @@ impl WalletOperations for SqlClient {
             RETURNING user_id, wallet_id, is_primary, created_at
             "#,
         )
-        .bind(&new_user_wallet.user_id)
+        .bind(new_user_wallet.user_id)
         .bind(&new_user_wallet.wallet_id)
         .bind(new_user_wallet.is_primary)
         .fetch_one(&self.db)

@@ -99,7 +99,7 @@ impl AuthorOperations for SqlClient {
             RETURNING id, privy_id, name, email, affiliation, created_at, updated_at
             "#,
         )
-        .bind(&new_author.id)
+        .bind(new_author.id)
         .bind(&new_author.privy_id)
         .bind(&new_author.name)
         .bind(&new_author.email)

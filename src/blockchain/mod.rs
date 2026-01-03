@@ -69,7 +69,7 @@ pub async fn submit_publication_to_blockchain(
         state
     );
 
-    Ok(submit_publish_transaction(aptos, privy, &publication_data).await?)
+    submit_publish_transaction(aptos, privy, &publication_data).await
 }
 
 pub async fn simulate_publication_to_blockchain(
@@ -77,7 +77,7 @@ pub async fn simulate_publication_to_blockchain(
     privy: &PrivyClient,
     data: &PublicationData,
 ) -> ZResult<(Value, Value)> {
-    let capability = generate_capability_for_publication(&data, 600).map_err(|err| {
+    let capability = generate_capability_for_publication(data, 600).map_err(|err| {
         tracing::error!("Failed to generate capability for publication: {}", err);
         zerror!(err)
     })?;
@@ -120,7 +120,7 @@ async fn prepare_publish_signed_txn(
     privy: &PrivyClient,
     data: &PublicationData,
 ) -> ZResult<SignedTransaction> {
-    let sequence_number = find_account_sequence_number(&aptos, data.user_wallet.to_string()).await;
+    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string()).await;
 
     let chain_id = 250;
     let module_id = ModuleId::new(
@@ -219,7 +219,7 @@ async fn prepare_mint_capability_txn(
         ],
     );
 
-    let sequence_number = find_account_sequence_number(&aptos, data.user_wallet.to_string()).await;
+    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string()).await;
 
     let chain_id = 250;
     let expiration_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 600;
@@ -253,7 +253,8 @@ pub(super) async fn find_account_sequence_number(
         .await
         .unwrap()
         .into_inner();
-    let sequence_number = resource
+    
+    resource
         .iter()
         .find(|r| r.type_ == "0x1::account::Account")
         .unwrap() // TODO: the account won't exist until the user funds it
@@ -263,8 +264,7 @@ pub(super) async fn find_account_sequence_number(
         .as_str()
         .unwrap()
         .parse::<u64>()
-        .unwrap();
-    sequence_number
+        .unwrap()
 }
 
 pub(super) fn build_authenticator(
@@ -274,9 +274,8 @@ pub(super) fn build_authenticator(
     tracing::debug!("Building authenticator for public key: {}", public_key_hex);
     tracing::debug!("Raw signature from Privy: {}", signature.data.signature);
 
-    let mut pk_bytes = hex::decode(public_key_hex.trim_start_matches("0x")).map_err(|err| {
+    let mut pk_bytes = hex::decode(public_key_hex.trim_start_matches("0x")).inspect_err(|&err| {
         tracing::error!("Hex decode error for public key: {}", err);
-        err
     })?;
     tracing::debug!("Public key bytes length: {}", pk_bytes.len());
     match pk_bytes.len() {
@@ -293,9 +292,8 @@ pub(super) fn build_authenticator(
         }
     }
     let sig_bytes =
-        hex::decode(signature.data.signature.trim_start_matches("0x")).map_err(|err| {
+        hex::decode(signature.data.signature.trim_start_matches("0x")).inspect_err(|&err| {
             tracing::error!("Hex decode error for signature: {}", err);
-            err
         })?;
     tracing::debug!("Signature bytes length: {}", sig_bytes.len());
     let sig = Signature::try_from(sig_bytes.as_slice()).map_err(|err| {
@@ -325,9 +323,9 @@ pub(super) async fn sign_with_privy(
 
     let ctx = AuthorizationContext::new().push(PrivateKey(CONFIG.privy_signer_key.to_owned()));
 
-    Ok(privy
+    privy
         .wallets()
         .raw_sign(wallet_id, &ctx, None, &body)
         .await
-        .map_err(|e| zerror!("Privy signature failed: {:?}", e))?)
+        .map_err(|e| zerror!("Privy signature failed: {:?}", e))
 }

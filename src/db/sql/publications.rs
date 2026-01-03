@@ -102,7 +102,7 @@ impl PublicationOperations for SqlClient {
             RETURNING id, user_id, title, about, tags, s3key, price, status, transaction_hash, created_at, updated_at
             "#,
         )
-        .bind(&new_publication.user_id)
+        .bind(new_publication.user_id)
         .bind(&new_publication.title)
         .bind(&new_publication.about)
         .bind(&new_publication.tags)

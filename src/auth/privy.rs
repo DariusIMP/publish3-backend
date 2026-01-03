@@ -87,10 +87,10 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let auth_header = req.headers().get("Authorization");
 
-        if let Some(auth_header) = auth_header {
-            if let Ok(auth_str) = auth_header.to_str() {
-                if auth_str.starts_with("Bearer ") {
-                    let token = &auth_str[7..]; // Remove "Bearer " prefix
+        if let Some(auth_header) = auth_header
+            && let Ok(auth_str) = auth_header.to_str()
+                && let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    // Remove "Bearer " prefix
 
                     match verify_privy_token(token) {
                         Ok(claims) => {
@@ -106,8 +106,6 @@ where
                         }
                     }
                 }
-            }
-        }
 
         let error = actix_web::error::ErrorUnauthorized(serde_json::json!({
             "error": "Unauthorized",

@@ -48,7 +48,7 @@ impl PurchaseOperations for SqlClient {
             RETURNING id, user_id, publication_id, status, transaction_hash, created_at, updated_at
             "#,
         )
-        .bind(&new_purchase.user_id)
+        .bind(new_purchase.user_id)
         .bind(new_purchase.publication_id)
         .bind(new_purchase.status.as_deref().unwrap_or("PENDING"))
         .bind(&new_purchase.transaction_hash)
