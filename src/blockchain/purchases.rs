@@ -147,5 +147,5 @@ pub async fn simulate_purchase_to_blockchain(
         })
     };
 
-    parse_simulation(&simulation_value, "purchase")
+    parse_simulation(simulation_value, "purchase")
 }

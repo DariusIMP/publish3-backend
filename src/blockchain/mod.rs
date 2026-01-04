@@ -142,8 +142,8 @@ pub async fn simulate_publication_to_blockchain(
         })
     };
 
-    let mint_sim = parse_simulation(&mint_simulation_value, "mint_publish_capability_with_sig")?;
-    let publish_sim = parse_simulation(&publish_simulation_value, "publish")?;
+    let mint_sim = parse_simulation(mint_simulation_value, "mint_publish_capability_with_sig")?;
+    let publish_sim = parse_simulation(publish_simulation_value, "publish")?;
     let total_gas_cost_octas = mint_sim.total_cost_octas + publish_sim.total_cost_octas;
 
     Ok(SimulationSummary {
