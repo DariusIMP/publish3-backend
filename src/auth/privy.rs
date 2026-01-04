@@ -85,6 +85,15 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        // Skip authentication for health check endpoint
+        if req.path() == "/health" {
+            let fut = self.service.call(req);
+            return Box::pin(async move {
+                let res = fut.await?;
+                Ok(res)
+            });
+        }
+
         let auth_header = req.headers().get("Authorization");
 
         if let Some(auth_header) = auth_header

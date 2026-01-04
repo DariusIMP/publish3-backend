@@ -1,4 +1,5 @@
 pub mod authors;
+pub mod health;
 pub mod publications;
 pub mod purchases;
 pub mod users;
@@ -7,6 +8,7 @@ pub mod users;
 pub mod tests;
 
 pub fn config(cfg: &mut actix_web::web::ServiceConfig) {
+    health::config(cfg);
     users::config(cfg);
     authors::config(cfg);
     publications::config(cfg);
