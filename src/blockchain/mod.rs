@@ -3,6 +3,8 @@ pub mod purchases;
 pub mod signing;
 
 use aptos_crypto::ed25519::{PublicKey, Signature};
+use aptos_rest_client::Client as AptosRestClient;
+use aptos_rest_client::aptos_api_types::HashValue;
 use aptos_rust_sdk::client::rest_api::AptosFullnodeClient;
 use aptos_rust_sdk_types::api_types::chain_id::ChainId;
 use aptos_rust_sdk_types::api_types::transaction::{
@@ -64,6 +66,7 @@ pub struct PublicationData {
 /// Submit a publication to the blockchain using the publish3 Move contract
 pub async fn submit_publication_to_blockchain(
     aptos: &AptosFullnodeClient,
+    aptos_rest_client: &AptosRestClient,
     privy: &PrivyClient,
     publication_data: PublicationData,
 ) -> ZResult<(Value, State)> {
@@ -73,12 +76,43 @@ pub async fn submit_publication_to_blockchain(
             zerror!(err)
         })?;
 
-    let (value, state) = mint_publish_capability(aptos, privy, &publication_data, &capability)
+    let (value, state) = mint_publish_capability(
+        aptos,
+        privy,
+        &publication_data,
+        &capability,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!("Failed to mint publish capability: {}", err);
+        zerror!(err)
+    })?;
+
+    // Extract transaction hash and expiration timestamp from the mint transaction response
+    let hash_str = value
+        .get("hash")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| zerror!("Missing 'hash' in transaction response"))?;
+    let hash = HashValue::from_str(hash_str.trim_start_matches("0x"))
+        .map_err(|e| zerror!("Failed to parse transaction hash: {}", e))?;
+
+    let expiration_timestamp_secs = value
+        .get("expiration_timestamp_secs")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| zerror!("Missing 'expiration_timestamp_secs' in transaction response"))?
+        .parse::<u64>()
+        .map_err(|e| zerror!("Failed to parse expiration_timestamp_secs: {}", e))?;
+
+    // Wait for the transaction to be committed
+    aptos_rest_client
+        .wait_for_transaction_by_hash(
+            hash.into(),
+            expiration_timestamp_secs,
+            None, // max_server_lag_wait
+            None, // timeout_from_call
+        )
         .await
-        .map_err(|err| {
-            tracing::error!("Failed to mint publish capability: {}", err);
-            zerror!(err)
-        })?;
+        .map_err(|e| zerror!("Failed to wait for transaction: {}", e))?;
 
     tracing::debug!(
         "Minted publish capability. Value: {}. State: {:?}",
@@ -172,7 +206,14 @@ async fn prepare_publish_signed_txn(
     data: &PublicationData,
     simulation: bool,
 ) -> ZResult<SignedTransaction> {
-    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string()).await;
+    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string())
+        .await?
+        .ok_or_else(|| {
+            zerror!(
+                "Failed to obtain sequence number for account: {}",
+                data.user_wallet
+            )
+        })?;
 
     let chain_id = 250;
     let module_id = ModuleId::new(
@@ -276,7 +317,14 @@ async fn prepare_mint_capability_txn(
         ],
     );
 
-    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string()).await;
+    let sequence_number = find_account_sequence_number(aptos, data.user_wallet.to_string())
+        .await?
+        .ok_or_else(|| {
+            zerror!(
+                "Failed to obtain sequence number for account: {}",
+                data.user_wallet
+            )
+        })?;
 
     let chain_id = 250;
     let expiration_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 600;
@@ -307,23 +355,25 @@ async fn prepare_mint_capability_txn(
 pub(super) async fn find_account_sequence_number(
     aptos: &AptosFullnodeClient,
     address: String,
-) -> u64 {
-    match aptos.get_account_resources(address).await {
-        Ok(response) => {
-            let resource = response.into_inner();
-            resource
-                .iter()
-                .find(|r| r.type_ == "0x1::account::Account")
-                .and_then(|r| r.data.get("sequence_number"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.parse::<u64>().unwrap_or(0))
-                .unwrap_or(0)
-        }
-        Err(err) => {
-            tracing::warn!("Failed to get account resources, assuming sequence number 0: {}", err);
-            0
-        }
-    }
+) -> ZResult<Option<u64>> {
+    let resources = aptos
+        .get_account_resources(address.to_owned())
+        .await?
+        .into_inner();
+
+    let value = resources
+        .iter()
+        .find(|r| r.type_ == "0x1::account::Account")
+        .and_then(|r| r.data.get("sequence_number"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok());
+
+    tracing::debug!(
+        "Sequence number obtained for address '{}': {:?}",
+        address,
+        value
+    );
+    Ok(value)
 }
 
 pub(super) fn build_authenticator(

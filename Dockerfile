@@ -1,6 +1,8 @@
 # ---------- Build stage ----------
-FROM rust:1.90-slim AS builder
+FROM rust:1.90-bookworm AS builder
 WORKDIR /app
+
+ENV RUSTFLAGS="--cfg tokio_unstable"
 
 # System deps for building
 RUN apt-get update && apt-get install -y \

@@ -8,14 +8,12 @@ use p256::pkcs8::DecodePrivateKey;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    pub client_origin: String,
 
-    pub server_address: String,
-    pub server_port: String,
-    pub server_base_url: String,
-
+    #[cfg(not(feature = "aws-s3"))]
     pub s3_access_key: String,
+    #[cfg(not(feature = "aws-s3"))]
     pub s3_secret_key: String,
+    #[cfg(not(feature = "aws-s3"))]
     pub s3_endpoint: String,
 
     // Movement blockchain configuration
@@ -39,14 +37,12 @@ pub struct Config {
 impl Config {
     pub fn init() -> Config {
         let database_url = get_env_var("DATABASE_URL");
-        let client_origin = get_env_var("CLIENT_ORIGIN");
 
-        let server_address = get_env_var("SERVER_ADDRESS");
-        let server_port = get_env_var("SERVER_PORT");
-        let server_base_url = get_env_var("SERVER_BASE_URL");
-
+        #[cfg(not(feature = "aws-s3"))]
         let s3_access_key = get_env_var("S3_ACCESS_KEY");
+        #[cfg(not(feature = "aws-s3"))]
         let s3_secret_key = get_env_var("S3_SECRET_KEY");
+        #[cfg(not(feature = "aws-s3"))]
         let s3_endpoint = get_env_var("S3_ENDPOINT");
 
         // Movement blockchain configuration
@@ -72,12 +68,11 @@ impl Config {
 
         Config {
             database_url,
-            client_origin,
-            server_address,
-            server_port,
-            server_base_url,
+            #[cfg(not(feature = "aws-s3"))]
             s3_access_key,
+            #[cfg(not(feature = "aws-s3"))]
             s3_secret_key,
+            #[cfg(not(feature = "aws-s3"))]
             s3_endpoint,
             movement_network,
             movement_rpc_url,

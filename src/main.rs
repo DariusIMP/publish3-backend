@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
+#[cfg(not(feature = "aws-s3"))]
+use crate::db::s3::S3Bucket;
 use crate::{
     blockchain::CapabilitySigner,
     config::Config,
-    db::{
-        s3::{S3Bucket, client::S3Client},
-        sql::SqlClient,
-    },
+    db::{s3::client::S3Client, sql::SqlClient},
 };
 use actix_cors::Cors;
 use actix_web::{App, HttpServer, http::header, middleware, web};
+use aptos_rest_client::Client as AptosRestClient;
 use aptos_rust_sdk::client::config::AptosNetwork;
 use aptos_rust_sdk::client::{builder::AptosClientBuilder, rest_api::AptosFullnodeClient};
+
 use dotenv::dotenv;
 use lazy_static::lazy_static;
 use privy_rs::PrivyClient;
@@ -31,6 +32,7 @@ pub struct AppState {
     sql_client: Arc<SqlClient>,
     s3_client: Arc<S3Client>,
     aptos_client: Arc<AptosFullnodeClient>,
+    aptos_rest_client: Arc<AptosRestClient>,
     privy_client: Arc<PrivyClient>,
 }
 
@@ -60,6 +62,9 @@ async fn main() -> std::io::Result<()> {
     ));
 
     let aptos_client = Arc::new(builder.build());
+    let aptos_rest_client = Arc::new(AptosRestClient::new(
+        Url::parse(CONFIG.movement_rpc_url.as_str()).unwrap(),
+    ));
 
     let pool = match PgPoolOptions::new()
         .max_connections(10)
@@ -76,24 +81,28 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    match sqlx::migrate!().run(&pool).await {
+        Ok(_) => tracing::info!("Migrations run successfully."),
+        Err(err) => tracing::info!("Migrations failed to run: {}. Skipping...", err),
+    }
+
     let sql_client = Arc::new(SqlClient::new(pool).await);
 
     let s3_client = create_s3_client().await;
 
+    #[cfg(not(feature = "aws-s3"))]
     s3_client
         .create_bucket(S3Bucket::Storage, true)
         .await
         .unwrap();
 
-    let address = format!("{}:{}", CONFIG.server_address, CONFIG.server_port);
-
-    tracing::info!("starting HTTP server at http://{address}");
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(AppState {
                 sql_client: sql_client.clone(),
                 s3_client: s3_client.clone(),
                 aptos_client: aptos_client.clone(),
+                aptos_rest_client: aptos_rest_client.clone(),
                 privy_client: privy_client.clone(),
             }))
             .wrap(middleware::Logger::default())
@@ -101,7 +110,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(crate::auth::Privy)
             .wrap(
                 Cors::default()
-                    .allowed_origin(&CONFIG.client_origin)
+                    .allow_any_origin()
                     .allowed_methods(vec!["GET", "POST", "DELETE", "PUT"])
                     .allowed_headers(vec![
                         header::CONTENT_TYPE,

@@ -8,7 +8,11 @@ pub enum S3Bucket {
 }
 
 impl S3Bucket {
+    #[cfg(not(feature = "aws-s3"))]
     pub const STORAGE: &'static str = "storage";
+
+    #[cfg(feature = "aws-s3")]
+    pub const STORAGE: &'static str = "publish3-storage";
 
     pub fn as_str(&self) -> &'static str {
         match self {

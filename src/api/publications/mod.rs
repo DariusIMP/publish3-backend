@@ -1007,26 +1007,30 @@ async fn handle_publication(
     form: &CreatePublicationForm,
     data: &AppState,
 ) -> ZResult<PublicationResponse> {
-    let authors =
-        parse_authors(&form.authors).map_err(|err| zerror!("Failed to parse authors: {}", err))?;
+    let authors = parse_authors(&form.authors)
+        .map_err(|err| zerror!("Failed to parse authors: {:?}", err))?;
 
     let publication = store_publication(form, user_id, &authors, data)
         .await
-        .map_err(|err| zerror!("Failed to store publication: {}", err))?;
+        .map_err(|err| zerror!("Failed to store publication: {:?}", err))?;
 
     let publication_data =
         prepare_blockchain_transaction(data, user_id, publication.id, &authors, form)
             .await
             .map_err(|err| zerror!(err))?;
 
-    let response =
-        submit_publication_to_blockchain(&data.aptos_client, &data.privy_client, publication_data)
-            .await
-            .map_err(|err| {
-                let error_msg = format!("Failed to submit publication to blockchain: {}", err);
-                tracing::debug!(error_msg);
-                zerror!(error_msg)
-            });
+    let response = submit_publication_to_blockchain(
+        &data.aptos_client,
+        &data.aptos_rest_client,
+        &data.privy_client,
+        publication_data,
+    )
+    .await
+    .map_err(|err| {
+        let error_msg = format!("Failed to submit publication to blockchain: {:?}", err);
+        tracing::debug!(error_msg);
+        zerror!(error_msg)
+    });
 
     match response {
         Ok((value, _state)) => {
@@ -1047,7 +1051,7 @@ async fn handle_publication(
                 .await;
 
             if let Err(err) = result {
-                tracing::error!("Failed to update publication status on DB: {}", err);
+                tracing::error!("Failed to update publication status on DB: {:?}", err);
             }
             Ok(PublicationResponse {
                 id: publication.id,
@@ -1056,7 +1060,7 @@ async fn handle_publication(
         }
         Err(err) => {
             let _ = delete_publication_internal(data, publication.id, user_id).await;
-            Err(zerror!("The publication transaction failed: {}", err))
+            Err(zerror!("The publication transaction failed: {:?}", err))
         }
     }
 }

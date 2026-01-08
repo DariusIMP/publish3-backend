@@ -11,6 +11,8 @@ use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use uuid::Uuid;
 
+use crate::blockchain::find_account_sequence_number;
+use crate::zerror;
 use crate::{CONFIG, common::zresult::ZResult};
 use aptos_rust_sdk_types::api_types::address::AccountAddress;
 use bcs;
@@ -34,8 +36,14 @@ pub async fn submit_purchase_to_blockchain(
     privy: &PrivyClient,
     data: PurchaseData,
 ) -> ZResult<(Value, State)> {
-    let sequence_number =
-        super::find_account_sequence_number(aptos, data.buyer_wallet.to_string()).await;
+    let sequence_number = find_account_sequence_number(aptos, data.buyer_wallet.to_string())
+        .await?
+        .ok_or_else(|| {
+            zerror!(
+                "Failed to obtain sequence number for wallet '{}'.",
+                data.buyer_wallet
+            )
+        })?;
 
     let chain_id = 250;
     let module_id = ModuleId::new(
@@ -81,9 +89,9 @@ pub async fn simulate_purchase_to_blockchain(
     _privy: &PrivyClient,
     data: PurchaseData,
 ) -> ZResult<TransactionSimulation> {
-    let sequence_number =
-        super::find_account_sequence_number(aptos, data.buyer_wallet.to_string()).await;
-
+    let sequence_number = find_account_sequence_number(aptos, data.buyer_wallet.to_string())
+        .await?
+        .ok_or_else(|| zerror!("Failed to obtain sequence number during simulation."))?;
     let chain_id = 250;
     let module_id = ModuleId::new(
         AccountAddress::from_str(CONFIG.contract_address.as_str()).unwrap(),

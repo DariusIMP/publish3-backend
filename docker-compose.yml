@@ -6,7 +6,7 @@ services:
     ports:
       - '6500:5432'
     volumes:
-      - progresDB:/var/lib/postgresql/data
+      - postgresDB:/var/lib/postgresql/data
     env_file:
       - ./.env
   pgAdmin:
@@ -16,13 +16,6 @@ services:
       - ./.env
     ports:
       - "5050:80"
-  redis:
-    image: redis:alpine
-    container_name: publish3-redis
-    ports:
-      - '6379:6379'
-    volumes:
-      - redisDB:/data
   minio:
     image: minio/minio:latest
     container_name: publish3-minio
@@ -40,6 +33,5 @@ services:
       - minio_data:/data
       # - ~/minio/certs:/root/.minio/certs:ro
 volumes:
-  redisDB:
-  progresDB:
+  postgresDB:
   minio_data:
